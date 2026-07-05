@@ -1,0 +1,198 @@
+// Typed fetch layer. Relative URLs so it works behind the Vite dev proxy and
+// when the same build is served by FastAPI in production.
+
+export type Status = "good" | "watch" | "alert" | "neutral";
+
+export interface DailyRow {
+  day: string;
+  steps: number | null;
+  resting_hr: number | null;
+  hrv_last_night_avg: number | null;
+  sleep_score: number | null;
+  avg_stress: number | null;
+  body_battery_high: number | null;
+  training_readiness: number | null;
+  vo2max_running: number | null;
+  weight_kg: number | null;
+  sleep_seconds: number | null;
+  [k: string]: number | string | null;
+}
+
+export interface ActivityRow {
+  activity_id: number;
+  day: string | null;
+  start_time_local: string | null;
+  activity_type: string | null;
+  name: string | null;
+  distance_m: number | null;
+  duration_s: number | null;
+  elevation_gain_m: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  calories: number | null;
+  avg_cadence: number | null;
+  avg_temp_c: number | null;
+  training_load: number | null;
+  vo2max: number | null;
+}
+
+export interface Readiness {
+  score: number | null;
+  components: Record<string, number>;
+}
+
+export interface MetricCard {
+  key: string;
+  label: string;
+  unit: string;
+  higher_better: boolean | null;
+  value: number;
+  avg7: number | null;
+  avg30: number | null;
+  delta_pct: number | null;
+  trend: string;
+  z: number | null;
+  status: Status;
+  note: string;
+  series: { day: string; value: number | null }[];
+}
+
+export interface SleepReport {
+  available: boolean;
+  reason?: string;
+  as_of?: string;
+  nights_analyzed?: number;
+  overall_grade?: { score: number | null; letter: string };
+  prescription?: {
+    target_sleep_hours: number;
+    target_bedtime: string;
+    target_waketime: string;
+    consistency_target_min: number;
+    rationale: string;
+  };
+  dimensions?: SleepDimension[];
+  recommendations?: { priority: number; title: string; detail: string; science: string }[];
+  sleep_need?: {
+    estimate_hours: number;
+    method: string;
+    confidence: string;
+    note: string;
+    buckets: { range: string; avg_recovery: number | null; nights: number }[];
+  };
+  consistency?: Record<string, number | string | null>;
+  stages?: Record<string, number | null | number[] | Record<string, unknown>>;
+  debt?: {
+    rolling_hours: number | null;
+    per_night: { day: string; actual: number; need: number; balance: number }[];
+  };
+  correlations?: { x: string; y: string; r: number; n: number; interpretation: string }[];
+  series?: SleepNight[];
+}
+
+export interface SleepDimension {
+  key: string;
+  label: string;
+  value: number | string | null;
+  target: number | string;
+  unit: string;
+  score: number | null;
+  letter: string;
+  status: Status | "unknown";
+}
+
+export interface SleepNight {
+  day: string;
+  sleep_hours: number | null;
+  sleep_score: number | null;
+  deep_pct: number | null;
+  rem_pct: number | null;
+  light_pct: number | null;
+  awake_pct: number | null;
+  efficiency: number | null;
+  bedtime_min: number | null;
+  waketime_min: number | null;
+  midpoint_min: number | null;
+  bedtime_clock: string | null;
+  waketime_clock: string | null;
+  hrv_last_night_avg: number | null;
+  resting_hr: number | null;
+  training_readiness: number | null;
+  body_battery_high: number | null;
+  avg_stress: number | null;
+}
+
+export interface Pace {
+  label: string;
+  sec_per_km: number;
+  sec_per_mile: number;
+  per_km: string;
+  per_mile: string;
+}
+
+export interface Fitness {
+  current_vdot: number;
+  vo2max: number | null;
+  weekly_miles: number;
+  garmin_predictions: Record<string, { seconds: number; time: string; vdot: number }>;
+  model_predictions: Record<string, { time: string; distance_m: number }>;
+  paces: Record<string, Pace>;
+  heat_table: { temp_f: number; penalty_pct: number; per_mile: string; sec_per_mile: number }[];
+  altitude_note: string;
+  heat_acclimation_pct: number | null;
+}
+
+export interface PacePlan {
+  race: string;
+  current_vdot: number;
+  goal_vdot: number;
+  goal_time: string;
+  gap_vdot: number;
+  weeks: number;
+  weeks_needed_estimate: number;
+  verdict: string;
+  headline: string;
+  mileage_start: number;
+  mileage_peak: number;
+  goal_paces: Record<string, Pace>;
+  current_paces: Record<string, Pace>;
+  races_available: string[];
+  heat_note: string;
+  schedule: {
+    week: number;
+    phase: string;
+    focus: string;
+    mileage: number;
+    long_run_miles: number;
+  }[];
+}
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`/api${path}`);
+  if (!res.ok) throw new Error(`${path} → ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export const api = {
+  daily: (days = 120) => get<DailyRow[]>(`/metrics/daily?days=${days}`),
+  activities: (days = 120) => get<ActivityRow[]>(`/activities?days=${days}`),
+  readiness: () => get<Readiness>(`/analytics/readiness`),
+  insights: () => get<{ insights: string[] }>(`/insights`),
+  trainingLoad: (days = 180) =>
+    get<{ acwr: Record<string, number>[]; monotony: Record<string, number>[] }>(
+      `/analytics/training-load?days=${days}`,
+    ),
+  metrics: (days = 90) => get<{ cards: MetricCard[] }>(`/coach/metrics?days=${days}`),
+  sleep: (days = 120) => get<SleepReport>(`/coach/sleep?days=${days}`),
+  fitness: () => get<Fitness>(`/coach/fitness`),
+  pace: (race: string, goalSeconds: number | null, weeks: number, weeklyMiles: number | null) => {
+    const q = new URLSearchParams({ race, weeks: String(weeks) });
+    if (goalSeconds) q.set("goal_seconds", String(goalSeconds));
+    if (weeklyMiles != null) q.set("weekly_miles", String(weeklyMiles));
+    return get<PacePlan>(`/coach/pace?${q.toString()}`);
+  },
+  sync: async (days = 2) => {
+    const res = await fetch(`/api/sync?days=${days}`, { method: "POST" });
+    if (!res.ok) throw new Error(`sync → ${res.status}`);
+    return (await res.json()) as { status: string; days: string };
+  },
+};

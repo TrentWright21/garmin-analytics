@@ -1,0 +1,22 @@
+# Secrets — your Garmin login lives here. Never commit.
+.env
+
+# Personal data: SQLite database + Garmin OAuth tokens. Never commit.
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend build output
+node_modules/
+frontend/dist/
+
+# OS noise
+.DS_Store
+Thumbs.db

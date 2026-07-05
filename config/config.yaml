@@ -1,0 +1,10 @@
+# Non-secret application configuration. Safe to commit.
+log_level: INFO
+log_json: false          # set true when running in Docker
+timezone: America/Chicago
+units: imperial
+
+sync:
+  hour: 6                # daily Garmin sync at 06:30 local
+  minute: 30
+  backfill_days: 30      # history fetched on very first run

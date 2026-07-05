@@ -1,0 +1,14 @@
+# Normalize line endings so clones work on Windows, macOS, and Linux alike.
+* text=auto
+
+# Shell scripts must be LF or bash fails with "\r: command not found".
+*.sh text eol=lf
+Makefile text eol=lf
+
+# PowerShell scripts are Windows-native.
+*.ps1 text eol=crlf
+
+# Binaries
+*.png binary
+*.ico binary
+*.woff2 binary

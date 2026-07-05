@@ -1,0 +1,15 @@
+services:
+  backend:
+    build: ./backend
+    container_name: garmin-analytics
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      GA_ENVIRONMENT: prod
+      GA_DATABASE_URL: sqlite:////srv/data/garmin.db
+      GA_GARMIN_TOKENS_DIR: /srv/data/garmin_tokens
+    volumes:
+      - ./data:/srv/data          # db + garmin tokens persist on the host
+      - ./config:/srv/config:ro   # config.yaml, read-only in container
