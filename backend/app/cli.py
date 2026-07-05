@@ -31,6 +31,7 @@ SETUP_HELP = """\
 To connect your Garmin account, run the setup script from the project folder:
 
     Windows (PowerShell):   .\\setup.ps1
+    macOS / Linux:          ./setup.sh
 
 Or create a file named `.env` in the project folder (next to setup.ps1) with
 exactly these two lines, filled in with your own Garmin Connect login:

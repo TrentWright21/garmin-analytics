@@ -3,6 +3,11 @@
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
+if (-not (Test-Path ".venv\Scripts\python.exe")) {
+    Write-Host "No virtual environment yet - run .\setup.ps1 first." -ForegroundColor Red
+    exit 1
+}
+
 # 1. Build the dashboard if it hasn't been built yet.
 if (Test-Path "frontend\package.json") {
     if (-not (Test-Path "frontend\node_modules")) {
