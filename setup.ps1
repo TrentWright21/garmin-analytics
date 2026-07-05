@@ -28,22 +28,55 @@ if (-not $py) {
 }
 Write-Host "Using $py ($v)"
 
-# 2. Create .env with Garmin credentials (skipped if it already exists)
-if (-not (Test-Path ".env")) {
+# 2. Garmin credentials in .env — created interactively, or repaired if .env
+#    exists but the login is missing or still the .env.example placeholders.
+$envPath = Join-Path $PSScriptRoot ".env"
+
+function Get-DotEnvValue([string]$Key) {
+    if (-not (Test-Path $envPath)) { return $null }
+    # ReadAllLines auto-detects and strips a UTF-8 BOM if an editor added one.
+    foreach ($line in [System.IO.File]::ReadAllLines($envPath)) {
+        if ($line -match "^\s*$Key\s*=\s*(.*)$") { return $Matches[1].Trim() }
+    }
+    return $null
+}
+
+$curEmail     = Get-DotEnvValue "GA_GARMIN_EMAIL"
+$curPass      = Get-DotEnvValue "GA_GARMIN_PASSWORD"
+$placeholders = @($null, "", "you@example.com", "changeme")
+$needCreds    = ($placeholders -contains $curEmail) -or ($placeholders -contains $curPass)
+
+if ($needCreds) {
     Write-Host ""
-    Write-Host "Enter your Garmin Connect login (stored only in .env on this PC):"
+    Write-Host "Enter your Garmin Connect login. It is stored only in .env on this PC"
+    Write-Host "and is only ever sent to Garmin itself."
     $email = Read-Host "  Garmin email"
-    $pass  = Read-Host "  Garmin password"
+    # -AsSecureString keeps the password off the screen; it is never echoed.
+    $secure = Read-Host "  Garmin password (typing is hidden)" -AsSecureString
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        $pass = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+
+    # Keep any other lines the user added; replace only the two GA_GARMIN_* keys.
+    $other = @()
+    if (Test-Path $envPath) {
+        foreach ($line in [System.IO.File]::ReadAllLines($envPath)) {
+            if ($line -notmatch "^\s*GA_GARMIN_(EMAIL|PASSWORD)\s*=") { $other += $line }
+        }
+    }
     # Write BOM-less UTF-8: File.WriteAllLines uses UTF8 without a byte-order
     # mark, so pydantic-settings can read GA_GARMIN_EMAIL. (Windows PowerShell
     # 5.1's `Set-Content -Encoding utf8` prepends a BOM and breaks env parsing.)
     [System.IO.File]::WriteAllLines(
-        (Join-Path $PSScriptRoot ".env"),
-        @("GA_GARMIN_EMAIL=$email", "GA_GARMIN_PASSWORD=$pass")
+        $envPath,
+        [string[]](@("GA_GARMIN_EMAIL=$email", "GA_GARMIN_PASSWORD=$pass") + $other)
     )
-    Write-Host ".env created." -ForegroundColor Green
+    Write-Host ".env saved with your Garmin login." -ForegroundColor Green
 } else {
-    Write-Host ".env already exists - keeping it."
+    Write-Host ".env already has a Garmin login - keeping it."
 }
 
 # 3. Virtual environment + dependencies
@@ -70,6 +103,7 @@ Write-Host ""
 Write-Host "=== Setup complete ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps (run these here):" -ForegroundColor Cyan
-Write-Host "  1.  .\backfill.ps1        (pulls your last 30 days from Garmin)"
+Write-Host "  1.  .\backfill.ps1        (first pull: your last 30 days from Garmin;"
+Write-Host "                             Garmin may ask once for an MFA code)"
 Write-Host "  2.  .\start.ps1           (starts the app at http://localhost:3000)"
 Write-Host ""

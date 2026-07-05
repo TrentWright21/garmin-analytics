@@ -15,12 +15,56 @@ import argparse
 import sys
 from datetime import date
 
-from app.collectors.base import CollectorAuthError, CollectorError, GarminCollector
+from app.collectors.base import (
+    CollectorAuthError,
+    CollectorError,
+    CollectorRateLimitError,
+    GarminCollector,
+)
 from app.collectors.garmin_connect import GarminConnectCollector
-from app.config import get_settings
+from app.config import REPO_ROOT, Settings, get_settings
 from app.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
+
+SETUP_HELP = """\
+To connect your Garmin account, run the setup script from the project folder:
+
+    Windows (PowerShell):   .\\setup.ps1
+
+Or create a file named `.env` in the project folder (next to setup.ps1) with
+exactly these two lines, filled in with your own Garmin Connect login:
+
+    GA_GARMIN_EMAIL=you@example.com
+    GA_GARMIN_PASSWORD=your-garmin-password
+
+Your credentials stay in that file on this machine. They are only ever sent
+to Garmin's own login service - nowhere else."""
+
+RATE_LIMIT_HELP = """\
+Garmin is rate-limiting login attempts right now (HTTP 429). Nothing is
+broken and your credentials are fine - Garmin just wants a break. Wait about
+an hour, then run the same command again."""
+
+
+def credentials_problem(settings: Settings) -> str | None:
+    """Explain why Garmin credentials are unusable, or ``None`` if they look fine.
+
+    Catches the three first-run states that used to end in a traceback:
+    no ``.env`` at all, an ``.env`` without the two GA_GARMIN_* keys, and an
+    ``.env`` still holding the ``.env.example`` placeholder values.
+    """
+    placeholders = {"you@example.com", "changeme"}
+    if settings.garmin_email is None or settings.garmin_password is None:
+        if not (REPO_ROOT / ".env").exists():
+            return f"No .env file found (looked at {REPO_ROOT / '.env'})."
+        return "Your .env file exists but GA_GARMIN_EMAIL / GA_GARMIN_PASSWORD are not set in it."
+    if (
+        settings.garmin_email.get_secret_value().strip().lower() in placeholders
+        or settings.garmin_password.get_secret_value().strip() in placeholders
+    ):
+        return "Your .env file still contains the example placeholder values, not a real login."
+    return None
 
 
 def cmd_test_auth(collector: GarminCollector) -> int:
@@ -29,10 +73,14 @@ def cmd_test_auth(collector: GarminCollector) -> int:
         name = collector.connect()
     except CollectorAuthError as exc:
         print(f"\nLogin failed: {exc}", file=sys.stderr)
-        print("Check GA_GARMIN_EMAIL / GA_GARMIN_PASSWORD in your .env.", file=sys.stderr)
+        print(f"\n{SETUP_HELP}", file=sys.stderr)
         return 1
+    except CollectorRateLimitError:
+        print(f"\n{RATE_LIMIT_HELP}", file=sys.stderr)
+        return 3
     except CollectorError as exc:
         print(f"\nCould not reach Garmin: {exc}", file=sys.stderr)
+        print("Check your internet connection, then try again.", file=sys.stderr)
         return 2
 
     print(f"\n  Logged in as: {name}")
@@ -68,6 +116,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     configure_logging()
+    if args.command in ("test-auth", "sync", "backfill"):
+        problem = credentials_problem(get_settings())
+        if problem:
+            print(f"\n{problem}\n\n{SETUP_HELP}", file=sys.stderr)
+            return 1
     if args.command == "test-auth":
         return cmd_test_auth(GarminConnectCollector(get_settings()))
     if args.command == "renormalize":
@@ -89,8 +142,27 @@ def main(argv: list[str] | None = None) -> int:
         engine = SyncEngine(GarminConnectCollector(get_settings()))
         end = date.today()
         start = end - timedelta(days=args.days - 1)
-        print(f"Syncing {start} .. {end} — this makes ~{14 * args.days} API calls, be patient.")
-        stats = engine.sync_range(start, end)
+        print(f"Syncing {start} .. {end} - this makes ~{14 * args.days} API calls, be patient.")
+        try:
+            stats = engine.sync_range(start, end)
+        except CollectorAuthError as exc:
+            print(f"\nGarmin login failed: {exc}", file=sys.stderr)
+            print(f"\n{SETUP_HELP}", file=sys.stderr)
+            return 1
+        except CollectorRateLimitError:
+            print(f"\n{RATE_LIMIT_HELP}", file=sys.stderr)
+            print(
+                "Everything synced so far is saved; the retry picks up where it left off.",
+                file=sys.stderr,
+            )
+            return 3
+        except CollectorError as exc:
+            print(f"\nCould not reach Garmin: {exc}", file=sys.stderr)
+            print(
+                "Check your internet connection, then run the same command again.",
+                file=sys.stderr,
+            )
+            return 2
         print(f"Done: {stats}")
         return 0
     return 1  # pragma: no cover - argparse enforces valid commands
