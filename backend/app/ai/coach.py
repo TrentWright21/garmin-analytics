@@ -275,13 +275,18 @@ class Coach:
             raise CoachNotConfiguredError(NOT_CONFIGURED_MESSAGE)
         self._client = client_factory(api_key=settings.anthropic_api_key.get_secret_value())
 
-    def reply(self, history: list[BetaMessageParam], user_message: str) -> str:
+    def reply(self, history: list[dict[str, str]], user_message: str) -> str:
         """One turn: replay stored history, add the new message, run tools, answer.
 
         The API is stateless; ``history`` is the conversation so far as
-        alternating user/assistant text messages loaded from the DB.
+        ``{"role": ..., "content": ...}`` dicts loaded from the DB (the store
+        only ever writes the roles "user" and "assistant").
         """
-        messages: list[BetaMessageParam] = [*history, {"role": "user", "content": user_message}]
+        messages: list[BetaMessageParam] = [
+            {"role": "assistant" if m["role"] == "assistant" else "user", "content": m["content"]}
+            for m in history
+        ]
+        messages.append({"role": "user", "content": user_message})
         runner = self._client.beta.messages.tool_runner(
             model=MODEL,
             max_tokens=MAX_TOKENS,

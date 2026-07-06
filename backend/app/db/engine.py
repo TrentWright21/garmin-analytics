@@ -18,6 +18,10 @@ from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
+
+# Import all model modules so their tables register on Base.metadata before
+# create_all runs (chat models live in a separate module from the core ones).
+from app.db.models import chat as _chat_models  # noqa: F401
 from app.db.models.core import Base, RawApiData
 
 _engine: Engine | None = None
