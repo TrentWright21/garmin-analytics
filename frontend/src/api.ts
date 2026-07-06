@@ -166,6 +166,26 @@ export interface PacePlan {
   }[];
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatResponse {
+  configured: boolean;
+  conversation_id: string | null;
+  reply: string;
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`);
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
@@ -194,5 +214,19 @@ export const api = {
     const res = await fetch(`/api/sync?days=${days}`, { method: "POST" });
     if (!res.ok) throw new Error(`sync → ${res.status}`);
     return (await res.json()) as { status: string; days: string };
+  },
+
+  coachStatus: () => get<{ configured: boolean }>(`/coach/status`),
+  conversations: () => get<{ conversations: ConversationSummary[] }>(`/coach/conversations`),
+  conversation: (id: string) =>
+    get<{ id: string; messages: ChatMessage[] }>(`/coach/conversations/${id}`),
+  chat: async (message: string, conversationId: string | null) => {
+    const res = await fetch(`/api/coach/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, conversation_id: conversationId }),
+    });
+    if (!res.ok) throw new Error(`chat → ${res.status}`);
+    return (await res.json()) as ChatResponse;
   },
 };

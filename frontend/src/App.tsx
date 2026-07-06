@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api } from "./api";
 import Activities from "./pages/Activities";
+import Coach from "./pages/Coach";
 import Overview from "./pages/Overview";
 import PaceCoach from "./pages/PaceCoach";
 import SleepCoach from "./pages/SleepCoach";
@@ -10,6 +11,7 @@ import Trends from "./pages/Trends";
 
 const NAV = [
   { to: "/overview", icon: "◎", label: "Overview" },
+  { to: "/coach", icon: "✦", label: "AI Coach" },
   { to: "/sleep", icon: "☾", label: "Sleep Coach" },
   { to: "/pace", icon: "⏱", label: "Pace Coach" },
   { to: "/trends", icon: "📈", label: "Trends" },
@@ -65,6 +67,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
+          <Route path="/coach" element={<Coach />} />
           <Route path="/sleep" element={<SleepCoach />} />
           <Route path="/pace" element={<PaceCoach />} />
           <Route path="/trends" element={<Trends />} />
