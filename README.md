@@ -116,6 +116,42 @@ Restart the app after changing it.
 
 ---
 
+## AI Coach (optional)
+
+The **AI Coach** page lets you chat with Claude about your own trends — it
+answers by calling your existing analytics (training load, readiness, sleep,
+recent activities) and reasoning over the real numbers, not by guessing.
+
+It's off until you add an Anthropic API key. Everything else in the app works
+without one.
+
+**To turn it on:**
+
+1. Get an API key at **https://platform.claude.com** (sign in → API keys →
+   create key). It looks like `sk-ant-...`. Usage is billed by Anthropic to
+   your own account.
+2. Add this line to your `.env` file (the same file with your Garmin login),
+   on its own line:
+   ```
+   GA_ANTHROPIC_API_KEY=sk-ant-your-key-here
+   ```
+3. Restart the app (`.\start.ps1` / `./start.sh`, or `docker compose up -d`).
+
+Open the **AI Coach** page and ask something like *"How's my training load
+this week?"* Until the key is set, the page shows a short reminder of these
+steps instead.
+
+**Privacy note.** Using the Coach is the one part of this app that talks to a
+service other than Garmin. When you send a message, compact summaries of your
+*already-local* analytics (the same numbers shown on the dashboard — e.g.
+recent training load, readiness components, sleep figures) are sent to
+Anthropic's API to generate the reply. Your Garmin password is never sent, and
+nothing is sent until you both add the key and use the Coach. If you'd rather
+keep everything fully local, simply don't set the key. See
+[SECURITY.md](SECURITY.md).
+
+---
+
 ## Troubleshooting
 
 **"database is locked" or weird sync failures on Windows**
@@ -139,6 +175,11 @@ glued to the first line. The app tolerates it now, and re-running
 Garmin rate-limits logins and heavy fetching. Nothing is broken and your
 password is fine — wait about an hour and run the same command again.
 Everything already synced is saved; a rerun continues where it stopped.
+
+**AI Coach says it's "not configured"**
+It needs an Anthropic API key. Add `GA_ANTHROPIC_API_KEY=sk-ant-...` to your
+`.env` and restart — see [AI Coach (optional)](#ai-coach-optional) above. This
+never affects the rest of the dashboard.
 
 **Asked for an MFA code again**
 That happens only if the `data/garmin_tokens/` folder was deleted or the

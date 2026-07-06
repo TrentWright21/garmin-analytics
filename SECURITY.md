@@ -34,7 +34,29 @@ The dashboard and API bind to **localhost only**:
 - Docker publishes the port as `127.0.0.1:3000`, so nothing on your Wi-Fi
   or LAN can reach it.
 
-The app makes outbound connections to Garmin's API only.
+The app makes outbound connections to Garmin's API only — **with one opt-in
+exception: the AI Coach** (see below).
+
+## The AI Coach and Anthropic (opt-in)
+
+The AI Coach is off unless you add `GA_ANTHROPIC_API_KEY` to your `.env`. When
+it's on and you send a chat message, the app sends compact summaries of your
+*already-local* analytics (the numbers already shown on the dashboard, e.g.
+recent training load, readiness, sleep figures) to **Anthropic's API** to
+generate the reply. This is the only data that ever leaves your machine for a
+destination other than Garmin, and it only happens when you actively use the
+Coach.
+
+- Your Garmin **password is never sent** to Anthropic.
+- Raw Garmin payloads are not sent — only the computed summaries the tools return.
+- Your Anthropic key lives in the same local `.env`, stored as a secret and
+  never logged or echoed.
+- Prefer everything fully local? Don't set the key; the Coach stays off and
+  the rest of the app is unaffected.
+
+Chat history is stored locally in `data/garmin.db` (the `conversations` and
+`messages` tables) and is erased by the reset scripts along with everything
+else.
 
 ## What is stored on disk
 

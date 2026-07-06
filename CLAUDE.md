@@ -112,6 +112,31 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
 - `weight_kg` is null — Trent has no weigh-ins in Garmin (not a bug); weight
   charts populate once he logs weight.
 
+## AI Coach (added after M7) — in-app Claude chat over the user's own analytics
+
+- **`app/ai/coach.py`**: six `@beta_tool` wrappers around EXISTING
+  `engine.py` analytics (daily metrics, rolling trends, training load/ACWR,
+  readiness+components, insights, recent activities) returning compact JSON —
+  no analytics logic duplicated. `Coach` drives `client.beta.messages.tool_runner`
+  on `claude-opus-4-8` with adaptive thinking. Anthropic client injected via
+  `client_factory` (the test mock seam). Honest-coach system prompt: tool-data
+  only, flags uncertainty, not medical.
+- **Config**: optional `GA_ANTHROPIC_API_KEY` (SecretStr). Absent = Coach
+  reports "not configured", everything else works. `anthropic>=0.116.0`.
+- **Persistence**: `app/db/models/chat.py` (`conversations` + `messages` —
+  ordinary mutable tables, NOT the append-only raw layer) + `app/db/chat.py`
+  helpers. Registered on `Base.metadata` via an import in `engine.py`.
+- **API** (`app/api/routes/chat.py`, prefix `/api/coach`): `POST /chat`,
+  `GET /conversations`, `GET /conversations/{id}`, `GET /status`. Stateless —
+  replays stored history each turn. Claude errors → 502.
+- **Frontend**: `frontend/src/pages/Coach.tsx` — chat page (message list,
+  sidebar of past conversations, typing indicator, setup banner). Nav item
+  "AI Coach" at `/coach`.
+- **Tests**: `tests/unit/test_coach.py` (26) — tool wrappers on synthetic
+  data, persistence, Coach with a MOCKED client (no real API calls), chat API.
+- **Privacy**: using the Coach sends local analytics summaries to Anthropic
+  (documented in README + SECURITY.md); Garmin password never sent.
+
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
