@@ -11,6 +11,22 @@ function paceColor(speed: number | null, fast?: number | null, slow?: number | n
   return `hsl(${Math.round(t * 120)}, 72%, 42%)`; // 0 = red (slow) … 120 = green (fast)
 }
 
+function paceFromSpeed(mps: number | null): string | null {
+  if (mps == null || mps <= 0) return null;
+  const secPerMile = 1609.344 / mps;
+  const m = Math.floor(secPerMile / 60);
+  const s = Math.round(secPerMile % 60);
+  return `${m}:${String(s).padStart(2, "0")}/mi`;
+}
+
+function hoverLabel(speed: number | null, hr: number | null): string | null {
+  const parts: string[] = [];
+  const pace = paceFromSpeed(speed);
+  if (pace) parts.push(pace);
+  if (hr != null) parts.push(`${Math.round(hr)} bpm`);
+  return parts.length ? parts.join("  ·  ") : null;
+}
+
 export function RouteMap({ route }: { route: RouteData }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -25,15 +41,17 @@ export function RouteMap({ route }: { route: RouteData }) {
     }).addTo(map);
 
     for (let i = 0; i < pts.length - 1; i++) {
-      const [la1, lo1, sp] = pts[i];
+      const [la1, lo1, sp, hr] = pts[i];
       const [la2, lo2] = pts[i + 1];
-      L.polyline(
+      const segment = L.polyline(
         [
           [la1, lo1],
           [la2, lo2],
         ],
         { color: paceColor(sp, route.fast_mps, route.slow_mps), weight: 4, opacity: 0.9 },
       ).addTo(map);
+      const label = hoverLabel(sp, hr);
+      if (label) segment.bindTooltip(label, { sticky: true, direction: "top", offset: [0, -2] });
     }
 
     const first = pts[0];

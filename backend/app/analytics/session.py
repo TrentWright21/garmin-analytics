@@ -326,7 +326,7 @@ def session_efficiency_series(activities: pl.DataFrame, hr_max: float) -> list[d
 
 # -- GPS route ----------------------------------------------------------------
 
-RoutePoint = tuple[float, float, float | None]  # (lat, lon, speed_m_per_s)
+RoutePoint = tuple[float, float, float | None, float | None]  # (lat, lon, speed_m_s, hr)
 _ROUTE_MAX_POINTS = 600
 
 
@@ -352,8 +352,13 @@ def extract_route(details: dict[str, Any]) -> dict[str, Any]:
     speeds = [p[2] for p in points if p[2] is not None]
     fast, slow = _speed_scale(speeds)
     pts = [
-        [round(la, 5), round(lo, 5), (round(sp, 2) if sp is not None else None)]
-        for la, lo, sp in points
+        [
+            round(la, 5),
+            round(lo, 5),
+            (round(sp, 2) if sp is not None else None),
+            (round(hr) if hr is not None else None),
+        ]
+        for la, lo, sp, hr in points
     ]
     return {
         "has_gps": True,
@@ -379,7 +384,8 @@ def _points_from_metrics(details: dict[str, Any]) -> list[RoutePoint]:
             idx[str(d["key"])] = int(d["metricsIndex"])
     if "directLatitude" not in idx or "directLongitude" not in idx:
         return []
-    i_lat, i_lon, i_spd = idx["directLatitude"], idx["directLongitude"], idx.get("directSpeed")
+    i_lat, i_lon = idx["directLatitude"], idx["directLongitude"]
+    i_spd, i_hr = idx.get("directSpeed"), idx.get("directHeartRate")
     out: list[RoutePoint] = []
     for m in metrics:
         arr = m.get("metrics") if isinstance(m, dict) else None
@@ -389,7 +395,8 @@ def _points_from_metrics(details: dict[str, Any]) -> list[RoutePoint]:
         if lat is None or lon is None:
             continue
         spd = _f(_at(arr, i_spd)) if i_spd is not None else None
-        out.append((lat, lon, spd))
+        hr = _f(_at(arr, i_hr)) if i_hr is not None else None
+        out.append((lat, lon, spd, hr))
     return out
 
 
@@ -406,7 +413,7 @@ def _points_from_polyline(details: dict[str, Any]) -> list[RoutePoint]:
         lon = _f(p.get("lon") if p.get("lon") is not None else p.get("lng"))
         if lat is None or lon is None:
             continue
-        out.append((lat, lon, _f(p.get("speed"))))
+        out.append((lat, lon, _f(p.get("speed")), _f(p.get("heartRate"))))
     return out
 
 

@@ -249,14 +249,16 @@ def test_analyze_session_full_shape() -> None:
 
 
 def details_payload(activity_id: int, n: int = 20) -> dict:
-    """A synthetic Garmin activity-details payload with a GPS + speed track."""
+    """A synthetic Garmin activity-details payload with a GPS + speed + HR track."""
     descriptors = [
         {"key": "directLatitude", "metricsIndex": 0},
         {"key": "directLongitude", "metricsIndex": 1},
         {"key": "directSpeed", "metricsIndex": 2},
+        {"key": "directHeartRate", "metricsIndex": 3},
     ]
     metrics = [
-        {"metrics": [34.0 + i * 0.001, -86.0 + i * 0.001, 3.0 + (i % 5) * 0.3]} for i in range(n)
+        {"metrics": [34.0 + i * 0.001, -86.0 + i * 0.001, 3.0 + (i % 5) * 0.3, 140 + (i % 20)]}
+        for i in range(n)
     ]
     return {
         "activityId": activity_id,
@@ -269,7 +271,9 @@ def test_extract_route_from_metrics() -> None:
     r = session.extract_route(details_payload(5, 25))
     assert r["has_gps"] is True
     assert len(r["points"]) == 25
+    assert len(r["points"][0]) == 4  # [lat, lon, speed, hr]
     assert r["points"][0][2] is not None  # carries speed
+    assert r["points"][0][3] is not None  # carries heart rate
     assert r["bounds"][0][0] <= r["bounds"][1][0]  # minLat <= maxLat
     assert r["bounds"][0][1] <= r["bounds"][1][1]  # minLon <= maxLon
     assert r["fast_mps"] >= r["slow_mps"]  # p90 >= p10
@@ -296,6 +300,7 @@ def test_extract_route_polyline_fallback() -> None:
     assert r["has_gps"] is True
     assert len(r["points"]) == 2
     assert r["points"][0][2] is None  # polyline has no per-point speed
+    assert r["points"][0][3] is None  # polyline has no per-point HR
 
 
 # -- API ---------------------------------------------------------------------

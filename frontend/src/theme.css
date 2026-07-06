@@ -664,6 +664,20 @@ table.tbl th.num {
 .leaflet-container {
   font-family: var(--font);
 }
+.leaflet-tooltip {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  box-shadow: var(--shadow-pop);
+}
+.leaflet-tooltip-top::before {
+  border-top-color: var(--surface-1);
+}
 
 /* segmented bar (intensity distribution) */
 .segbar {

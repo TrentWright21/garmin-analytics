@@ -278,7 +278,7 @@ export interface SessionDetail {
 
 export interface RouteData {
   has_gps: boolean;
-  points?: [number, number, number | null][]; // [lat, lon, speed_m_per_s]
+  points?: [number, number, number | null, number | null][]; // [lat, lon, speed_m_s, hr]
   bounds?: [[number, number], [number, number]]; // [[minLat,minLon],[maxLat,maxLon]]
   fast_mps?: number | null;
   slow_mps?: number | null;
