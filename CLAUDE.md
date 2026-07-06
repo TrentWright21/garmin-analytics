@@ -22,7 +22,7 @@ required: type hints, docstrings, tests, ruff, mypy --strict.
 - `.env` in project root holds `GA_GARMIN_EMAIL` / `GA_GARMIN_PASSWORD`
   (prefix `GA_`, loaded by pydantic-settings). NEVER print or commit it.
 
-## Current state: Milestones 1–7 COMPLETE, verified (34/34 tests, ruff clean, mypy --strict clean)
+## Current state: Milestones 1–7 COMPLETE + distribution packaging, verified (47/47 tests, ruff clean, mypy --strict clean)
 
 - **M1** Foundation: pydantic-settings config (`app/config.py`, env + `config/config.yaml`),
   structlog (`app/logging.py`), FastAPI app (`app/main.py`), Docker, Makefile.
@@ -78,6 +78,28 @@ required: type hints, docstrings, tests, ruff, mypy --strict.
 
 Interactive API docs: http://localhost:3000/docs — dashboard: http://localhost:3000
 Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
+
+## Distribution packaging (July 2026) — app is shareable as a self-contained copy
+
+- Project is now a **git repo** (branch `main`). `.gitignore` protects `.env`,
+  `data/`, `.venv`; `.gitattributes` pins `*.sh` to LF (bash breaks on CRLF).
+- Scripts exist in pairs: `setup|start|sync|backfill|reset` as `.ps1` + `.sh`.
+  setup creates **and repairs** `.env` (placeholder/missing-key detection,
+  hidden password prompt, BOM-safe writes, preserves extra lines).
+- `cli.py`: `credentials_problem()` guard + friendly auth/429/network errors
+  (exit 1/3/2) — first-run users never see tracebacks. **User-facing CLI
+  strings must stay ASCII** (em-dashes render as mojibake in cp1252 consoles).
+- Docker: root multi-stage `Dockerfile` builds the frontend into the image;
+  layout mirrors the repo under `/srv` so REPO_ROOT-relative paths work.
+  Compose serves `127.0.0.1:3000`. One-time MFA login:
+  `docker compose run --rm backend python -m app.cli test-auth`.
+  NOTE: image not built locally (no Docker on this machine) — verified by
+  path cross-check + pyproject-only pip layer build only.
+- Docs: `README.md` (non-technical quickstart, 3 setup paths, troubleshooting)
+  and `SECURITY.md` (local-only, own-account-only, wipe instructions). Keep
+  both in sync with behavior changes.
+- Fresh-clone smoke test passed: clone → venv → 47/47 tests → npm ci/build →
+  boot with no `.env`/`data/` → all 12 endpoints 200, no tracebacks.
 
 ## CURRENT STATUS / NEXT UP
 

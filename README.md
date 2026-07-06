@@ -100,6 +100,9 @@ While the app is running it syncs by itself every morning (06:30 by
 default). After a break, catch up manually with `.\sync.ps1` /
 `./sync.sh` (last 2 days) — or in Docker it just happens.
 
+Want a clean slate? `.\reset.ps1` / `./reset.sh` deletes all synced data
+and login tokens (it asks for confirmation first; your `.env` is kept).
+
 ## Make it yours
 
 Edit `config/config.yaml`:

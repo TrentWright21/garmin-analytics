@@ -48,7 +48,9 @@ The app makes outbound connections to Garmin's API only.
 
 1. Stop the app (Ctrl+C, or `docker compose down`).
 2. Delete the `data/` folder — this erases all synced history **and** the
-   login tokens (the next login will ask for an MFA code again).
+   login tokens (the next login will ask for an MFA code again). The
+   `reset.ps1` / `reset.sh` scripts do this for you, with a confirmation
+   prompt.
 3. Delete `.env` to remove your stored credentials.
 4. Deleting the whole project folder removes every trace.
 
