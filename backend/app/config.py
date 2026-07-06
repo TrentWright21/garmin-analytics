@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     garmin_password: SecretStr | None = None
     garmin_tokens_dir: Path = DEFAULT_DATA_DIR / "garmin_tokens"
 
+    # Anthropic API key for the AI Coach (GA_ANTHROPIC_API_KEY). Optional:
+    # without it the Coach endpoints report "not configured" and everything
+    # else keeps working. SecretStr keeps it out of reprs and logs.
+    anthropic_api_key: SecretStr | None = None
+
     database_url: str = f"sqlite:///{DEFAULT_DATA_DIR / 'garmin.db'}"
 
     environment: Literal["dev", "prod"] = "dev"
