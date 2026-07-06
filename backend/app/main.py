@@ -94,6 +94,10 @@ if FRONTEND_DIST.is_dir():
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> FileResponse:
         candidate = FRONTEND_DIST / full_path
-        if full_path and candidate.is_file():
+        if full_path and candidate.is_file() and candidate.name != "index.html":
+            # Hashed assets are content-addressed, so they're safe to cache.
             return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        # index.html (and every client-side route) must always revalidate, or the
+        # browser keeps serving a stale page that points at old asset hashes after
+        # a rebuild — the "I updated but the browser shows the old UI" trap.
+        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
