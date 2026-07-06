@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes.chat import router as chat_router
 from app.api.routes.coach import router as coach_router
 from app.api.routes.core import router as api_router
+from app.api.routes.performance import router as performance_router
 from app.config import REPO_ROOT, get_app_config, get_settings
 from app.logging import configure_logging, get_logger
 
@@ -72,6 +73,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+app.include_router(performance_router)
 app.include_router(coach_router)
 app.include_router(chat_router)
 

@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { Status } from "../api";
+import { Icon } from "./icons";
 
 export function Card({
   title,
@@ -111,4 +112,50 @@ export function statusFromScore(score: number | null | undefined): string {
   if (score >= 80) return "good";
   if (score >= 60) return "watch";
   return "alert";
+}
+
+// Traffic-light band (green/yellow/red) -> the shared status vocabulary that
+// drives Pill / Grade / Meter colors, so readiness and risk read consistently.
+export function bandStatus(band: string | null | undefined): string {
+  if (band === "green") return "good";
+  if (band === "yellow") return "watch";
+  if (band === "red") return "alert";
+  return "unknown";
+}
+
+export function Modal({
+  title,
+  sub,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  sub?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <div>
+            <div className="card-title" style={{ marginBottom: sub ? 2 : 0 }}>
+              {title}
+            </div>
+            {sub && <div className="muted" style={{ fontSize: 12.5 }}>{sub}</div>}
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
 }

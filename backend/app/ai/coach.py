@@ -25,6 +25,8 @@ from anthropic.lib.tools import BetaFunctionTool
 from anthropic.types.beta import BetaMessageParam, BetaThinkingConfigAdaptiveParam
 
 from app.analytics import engine as ax
+from app.analytics import fitness, readiness, session
+from app.analytics.physiology import estimate_hr_max
 from app.config import Settings
 
 MODEL = "claude-opus-4-8"
@@ -242,6 +244,91 @@ def get_recent_activities(limit: int = 10) -> str:
     return _js({"activities": rows})
 
 
+def _hr_max() -> float:
+    return estimate_hr_max(ax.load_activities(), ax.load_daily())
+
+
+def get_fitness_form(days: int = 180) -> str:
+    """Fitness / Fatigue / Form from the Performance Management Chart.
+
+    Returns the latest CTL (Fitness, 42-day load average), ATL (Fatigue, 7-day),
+    TSB (Form = CTL-ATL), the 7-day ramp rate, a form-state label, and a plain
+    interpretation. Use for "how fit am I", "am I fresh/overreached", peaking,
+    or ramp-rate questions.
+
+    Args:
+        days: History window to build the model over, 28-365 (default 180).
+    """
+    days = max(28, min(days, 365))
+    start, end = _range(days)
+    load = ax.daily_training_load(ax.load_activities(start, end))
+    return _js(fitness.fitness_summary(load))
+
+
+def get_readiness_detail() -> str:
+    """Today's Red/Yellow/Green readiness with its ranked drivers.
+
+    Returns the 0-100 score, the band (green/yellow/red), each visible component
+    (HRV, resting HR, sleep, Body Battery, stress), the drivers worst-first, any
+    training-load penalty, and a one-line recommendation. Use for "how ready am
+    I today", "should I do my hard workout", daily go/no-go questions.
+    """
+    start, end = _range(90)
+    daily = ax.load_daily(start, end)
+    load = ax.daily_training_load(ax.load_activities(start, end))
+    return _js(readiness.daily_readiness(daily, load))
+
+
+def get_risk_flags() -> str:
+    """Overtraining / injury-risk flags with the evidence behind each.
+
+    Returns an overall risk band plus any fired flags (load spike / ACWR, HRV
+    suppression, elevated resting HR, monotony, sleep-vs-load mismatch, rapid
+    ramp, deep fatigue), each with a severity and the numbers that triggered it.
+    Use for "am I overtraining", "injury risk", "is my load safe" questions.
+    """
+    start, end = _range(90)
+    daily = ax.load_daily(start, end)
+    acts = ax.load_activities(start, end)
+    load = ax.daily_training_load(acts)
+    return _js(readiness.risk_flags(daily, acts, load))
+
+
+def get_intensity_distribution(days: int = 42) -> str:
+    """Aerobic vs anaerobic training distribution (polarized-training view).
+
+    Buckets each session by average HR into easy/moderate/hard, sums the time in
+    each, and reports percentages plus a verdict (polarized / grey-zone-heavy /
+    too-hard / all-easy). Use for "am I running too hard on easy days", "is my
+    intensity balanced", "80/20" questions.
+
+    Args:
+        days: Window to summarize, 7-365 (default 42).
+    """
+    days = max(7, min(days, 365))
+    start, end = _range(days)
+    return _js(fitness.intensity_distribution(ax.load_activities(start, end), _hr_max()))
+
+
+def get_workout_analysis(activity_id: int) -> str:
+    """Deep analysis of one workout by its Garmin activity id.
+
+    Returns effort/zone, efficiency factor, a physiological breakdown, comparison
+    to the user's baseline for similar sessions (pace & efficiency deltas),
+    aerobic decoupling when lap data exists, and specific insights. Get the
+    activity_id from get_recent_activities first. Use for "how was my run on X",
+    "break down my last workout", "was that a good session".
+
+    Args:
+        activity_id: Garmin activity id from get_recent_activities.
+    """
+    activity = ax.load_activity(activity_id)
+    if activity is None:
+        return _js({"error": "activity not found", "activity_id": activity_id})
+    history = ax.load_activities()
+    return _js(session.analyze_session(activity, history, _hr_max()))
+
+
 COACH_TOOLS: list[BetaFunctionTool[Any]] = [
     beta_tool(get_daily_metrics),
     beta_tool(get_rolling_trends),
@@ -249,6 +336,11 @@ COACH_TOOLS: list[BetaFunctionTool[Any]] = [
     beta_tool(get_readiness),
     beta_tool(get_insights),
     beta_tool(get_recent_activities),
+    beta_tool(get_fitness_form),
+    beta_tool(get_readiness_detail),
+    beta_tool(get_risk_flags),
+    beta_tool(get_intensity_distribution),
+    beta_tool(get_workout_analysis),
 ]
 
 

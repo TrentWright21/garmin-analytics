@@ -70,3 +70,11 @@ class GarminCollector(Protocol):
     def activities_by_date(self, start: date, end: date) -> list[dict[str, Any]]:
         """All activities whose start date falls in [start, end]."""
         ...
+
+    def activity_details(self, activity_id: int) -> dict[str, Any]:
+        """Per-sample detail for one activity: GPS track, speed, HR streams.
+
+        Fetched on demand (not in the daily sync) — one call per activity the
+        user actually opens. Raises the CollectorError hierarchy on failure.
+        """
+        ...

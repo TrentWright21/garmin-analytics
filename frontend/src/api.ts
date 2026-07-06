@@ -166,6 +166,124 @@ export interface PacePlan {
   }[];
 }
 
+// ---- performance analytics (M8) ----
+
+export interface FitnessSummary {
+  available: boolean;
+  as_of?: string;
+  fitness_ctl?: number | null;
+  fatigue_atl?: number | null;
+  form_tsb?: number | null;
+  form_state?: string;
+  ramp_7d?: number | null;
+  ramp_flag?: string;
+  interpretation?: string;
+}
+
+export interface FitnessPmc {
+  summary: FitnessSummary;
+  series: {
+    day: string;
+    load: number | null;
+    ctl: number | null;
+    atl: number | null;
+    tsb: number | null;
+    ramp_7d: number | null;
+  }[];
+}
+
+export interface Vo2maxTrend {
+  available: boolean;
+  current?: number | null;
+  trend_per_90d?: number | null;
+  direction?: string;
+  confidence?: string;
+  readings?: number;
+}
+
+export interface IntensityDistribution {
+  available: boolean;
+  hr_max_used?: number;
+  minutes?: { easy: number; moderate: number; hard: number };
+  pct?: { easy: number; moderate: number; hard: number };
+  aerobic_pct?: number;
+  anaerobic_pct?: number;
+  verdict?: string;
+}
+
+export interface ReadinessV2 {
+  available: boolean;
+  score: number | null;
+  band: string; // green | yellow | red | unknown
+  components?: Record<string, number>;
+  drivers?: { key: string; label: string; value: number; verdict: string }[];
+  load_penalty?: number;
+  load_note?: string | null;
+  recommendation?: string;
+}
+
+export interface RiskFlag {
+  code: string;
+  severity: string; // red | yellow
+  title: string;
+  detail: string;
+  evidence: Record<string, number | string>;
+}
+
+export interface RiskReport {
+  risk_band: string; // green | yellow | red
+  flag_count: number;
+  flags: RiskFlag[];
+}
+
+export interface SessionListItem {
+  activity_id: number;
+  day: string | null;
+  type: string | null;
+  distance_mi: number | null;
+  effort: string;
+  efficiency_factor: number | null;
+}
+
+export interface SessionDetail {
+  activity_id: number | null;
+  day: string | null;
+  type: string | null;
+  name: string | null;
+  distance_mi: number | null;
+  duration_min: number | null;
+  avg_hr: number | null;
+  pct_hr_max: number | null;
+  effort: string;
+  zone: number | null;
+  efficiency_factor: number | null;
+  physiology: string[];
+  baseline: {
+    n: number;
+    baseline_ef?: number | null;
+    baseline_pace_s_per_km?: number | null;
+    ef_delta_pct?: number | null;
+    pace_delta_s_per_km?: number | null;
+    note?: string;
+  };
+  decoupling: {
+    decoupling_pct: number;
+    first_half_ef: number;
+    second_half_ef: number;
+    aerobic_status: string;
+  } | null;
+  decoupling_note?: string;
+  insights: string[];
+}
+
+export interface RouteData {
+  has_gps: boolean;
+  points?: [number, number, number | null][]; // [lat, lon, speed_m_per_s]
+  bounds?: [[number, number], [number, number]]; // [[minLat,minLon],[maxLat,maxLon]]
+  fast_mps?: number | null;
+  slow_mps?: number | null;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -204,6 +322,14 @@ export const api = {
   metrics: (days = 90) => get<{ cards: MetricCard[] }>(`/coach/metrics?days=${days}`),
   sleep: (days = 120) => get<SleepReport>(`/coach/sleep?days=${days}`),
   fitness: () => get<Fitness>(`/coach/fitness`),
+  fitnessPmc: (days = 180) => get<FitnessPmc>(`/analytics/fitness?days=${days}`),
+  vo2max: () => get<Vo2maxTrend>(`/analytics/vo2max`),
+  intensity: (days = 42) => get<IntensityDistribution>(`/analytics/intensity?days=${days}`),
+  readinessV2: () => get<ReadinessV2>(`/analytics/readiness-v2`),
+  risk: () => get<RiskReport>(`/analytics/risk`),
+  sessions: (days = 90) => get<SessionListItem[]>(`/sessions?days=${days}`),
+  session: (id: number) => get<SessionDetail>(`/session/${id}`),
+  sessionRoute: (id: number) => get<RouteData>(`/session/${id}/route`),
   pace: (race: string, goalSeconds: number | null, weeks: number, weeklyMiles: number | null) => {
     const q = new URLSearchParams({ race, weeks: String(weeks) });
     if (goalSeconds) q.set("goal_seconds", String(goalSeconds));

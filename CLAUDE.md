@@ -137,6 +137,99 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
 - **Privacy**: using the Coach sends local analytics summaries to Anthropic
   (documented in README + SECURITY.md); Garmin password never sent.
 
+## Performance analytics + risk + session intelligence (added after AI Coach)
+
+New pure-analytics modules (Polars/math, DataFrames in -> dicts out, fully
+unit-tested on synthetic data — same convention as `engine.py`):
+
+- **`app/analytics/physiology.py`** — ONE shared definition of HR max
+  (`estimate_hr_max`: configured value > highest observed HR > 190 fallback),
+  the 5-zone %HRmax model, session `intensity_band` (easy/moderate/hard), and
+  Banister `trimp`. fitness/readiness/session all import these (no re-deriving).
+- **`app/analytics/fitness.py`** — the Performance Management Chart:
+  `performance_management` = CTL (42d EWMA "Fitness"), ATL (7d "Fatigue"),
+  TSB (Form) + 7d ramp; `fitness_summary`/`form_state` add bands + prose.
+  `vo2max_trend` EWMA-smooths + fits slope on REAL day offsets (clamped +-8/90d,
+  confidence-graded — do NOT regress on positional index, readings are sparse).
+  `intensity_distribution` = duration-weighted aerobic/anaerobic split + verdict.
+- **`app/analytics/readiness.py`** — `resting_hr_deviation` (7d vs 60d),
+  `sleep_trend`, `daily_readiness` (0-100 + green/yellow/red band + ranked
+  drivers + load penalty from ACWR/TSB), and `risk_flags` — an AUDITABLE rules
+  engine (LOAD_SPIKE, MONOTONY, HRV_SUPPRESSION, RHR_ELEVATED,
+  SLEEP_LOAD_MISMATCH, RAPID_RAMP, DEEP_FATIGUE), each with severity + evidence.
+- **`app/analytics/session.py`** — `efficiency_factor` (m/min per bpm),
+  `decoupling_index` (first- vs second-half aerobic decoupling from splits),
+  `analyze_session` (physiology breakdown + baseline-vs-similar-sessions +
+  insights), `session_efficiency_series`. Decoupling needs per-lap data, which
+  the bulk sync doesn't store yet -> returns null + note (see roadmap).
+
+Wiring:
+- **`app/api/routes/performance.py`** (registered in `main.py`): `GET
+  /api/analytics/fitness|vo2max|intensity|readiness-v2|risk`, `GET /api/sessions`,
+  `GET /api/session/{activity_id}` (404 if unknown). `engine.load_activity(id)`
+  added as the single-activity loader.
+- **`app/ai/coach.py`**: 5 new `beta_tool`s — `get_fitness_form`,
+  `get_readiness_detail`, `get_risk_flags`, `get_intensity_distribution`,
+  `get_workout_analysis` (ALL tool names must stay `get_`-prefixed; a test
+  asserts it). They wrap the new analytics, no logic duplicated.
+- **Tests**: `tests/unit/test_m8_performance.py` (18) — pure fns on synthetic
+  frames + API + coach tools against a seeded temp DB. Also fixed a pre-existing
+  test-isolation gap: two `test_coach.py` chat-status tests read the real `.env`
+  key; now monkeypatch `is_configured` like their sibling. Suite: 91 passing,
+  ruff + mypy --strict clean. Verified against the real 30-day DB.
+
+## Frontend redesign + M8 surfaces (added after the analytics)
+
+- **Redesign:** the dashboard moved from the dark theme to a **light enterprise
+  SaaS** system (white/soft-blue/cool-grey, hairline borders, no gradients/glow/
+  heavy shadows). It is a THEME-LEVEL refactor: `frontend/src/theme.css` was
+  rewritten but every semantic class name kept, so pages restyled with no logic
+  changes. Chart colors in `components/charts.tsx` switched to the dataviz
+  validated LIGHT column (validated on `#fff`). Emoji nav icons replaced by
+  `components/icons.tsx` (line SVGs). `App.tsx` gained a flat brand mark + a
+  responsive mobile drawer (sidebar collapses < 900px; grids reflow via
+  `!important` breakpoints that override the pages' inline `grid-template-columns`).
+  `components/ui.tsx` added `Modal` + `bandStatus()`. The app is light-mode only
+  by design (matches the data-viz palette).
+- **M8 analytics now surfaced in the UI** (previously API/coach-only):
+  * `api.ts` gained typed clients: `fitnessPmc`, `vo2max`, `intensity`,
+    `readinessV2`, `risk`, `sessions`, `session(id)`.
+  * **New page** `pages/Fitness.tsx` (nav "Fitness & Form", route `/fitness`):
+    CTL/ATL/TSB stat cards, the PMC ComposedChart (one axis — CTL area, ATL/TSB
+    lines, zero ref line), VO2max trend card, aerobic/anaerobic segmented bar.
+  * **Overview** now leads with readiness-v2 (score + green/yellow/red band +
+    ranked driver meters + recommendation) and a risk-flags panel, replacing the
+    old flat readiness average.
+  * **Activities** rows are clickable → `Modal` with the per-session analysis
+    (efficiency, physiology, baseline vs similar, decoupling, coach notes).
+- All still builds clean (`npm run build`: tsc + vite); the 7 new endpoints
+  return 200 through the real app. NOTE: the old `/api/analytics/readiness` and
+  `/coach/*` endpoints remain (Sleep/Pace pages use them); readiness-v2 is a
+  separate endpoint, not a replacement.
+
+## GPS route maps (per-run, added after the frontend redesign)
+
+- **On-demand, cached.** `GET /api/session/{id}/route` lazily fetches Garmin
+  activity *details* via a new collector method `activity_details(id)` (added to
+  the `GarminCollector` protocol + `garmin_connect.py`, on-demand — NOT in the
+  daily sync), caches the raw payload under endpoint `activity_details` in the
+  append-only raw layer, and returns a parsed track. Second view = cache hit,
+  no Garmin call. `performance.py._load_activity_details` is the shared cache
+  reader (matches `activityId` in the JSON); `_load_splits` reuses it.
+- **Pure parser** `session.extract_route(details)`: reads per-sample
+  `activityDetailMetrics` (directLatitude/Longitude/Speed via `metricDescriptors`),
+  falls back to `geoPolylineDTO`, downsamples to <=600 pts, returns
+  `{has_gps, points:[[lat,lon,speed]], bounds, fast_mps(p90), slow_mps(p10)}`.
+  Indoor activities -> `{has_gps: false}`. Tested on synthetic + real payloads.
+- **Frontend**: `leaflet` (only new dep) + `components/RouteMap.tsx` — Leaflet
+  directly (not react-leaflet; needs per-segment colors), OSM tiles, track drawn
+  as many short polylines colored green->red (fast->slow, HSL hue 0..120),
+  `circleMarker` start/end (avoids Leaflet's Vite marker-image issue),
+  `scrollWheelZoom:false`. Rendered at the TOP of the Activities `SessionModal`.
+- **Privacy**: opening a run map (a) makes one Garmin details call (cached) and
+  (b) loads OSM map tiles = reveals roughly where you ran to OSM's servers.
+  Documented in README + SECURITY.md next to the AI-Coach note.
+
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,

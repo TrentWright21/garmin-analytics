@@ -1,14 +1,12 @@
 import { api, type MetricCard } from "../api";
 import { COLORS, Sparkline } from "../components/charts";
-import { Card, Delta, Empty, Loading, Meter, Pill, statusFromScore } from "../components/ui";
-import { titleize } from "../lib/format";
+import { Card, Delta, Empty, Loading, Meter, Pill, bandStatus, statusFromScore } from "../components/ui";
 import { useAsync } from "../lib/useAsync";
 
-const READINESS_LABELS: Record<string, string> = {
-  hrv_vs_baseline: "HRV vs baseline",
-  sleep: "Sleep",
-  body_battery: "Body Battery",
-  stress: "Stress (inverted)",
+const DRIVER_COLOR: Record<string, string> = {
+  good: COLORS.good,
+  ok: COLORS.s1,
+  low: COLORS.critical,
 };
 
 function scoreColor(score: number | null | undefined): string {
@@ -27,7 +25,7 @@ function MetricTile({ c }: { c: MetricCard }) {
         <Pill status={c.status}>{c.status}</Pill>
       </div>
       <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
-        <div className="value tnum" style={{ fontSize: 26, fontWeight: 680 }}>
+        <div className="value tnum" style={{ fontSize: 26, fontWeight: 650 }}>
           {c.value}
           {c.unit && <small style={{ fontSize: 13, color: "var(--muted)", marginLeft: 3 }}>{c.unit}</small>}
         </div>
@@ -43,16 +41,103 @@ function MetricTile({ c }: { c: MetricCard }) {
   );
 }
 
+function ReadinessCard() {
+  const readiness = useAsync(() => api.readinessV2(), []);
+  const r = readiness.data;
+
+  return (
+    <Card title="Today's Readiness" sub="Transparent composite — every driver shown">
+      {readiness.loading ? (
+        <div className="center" style={{ minHeight: 160 }}>
+          <div className="spinner" />
+        </div>
+      ) : !r?.available ? (
+        <Empty msg="Not enough recent data to score readiness yet." />
+      ) : (
+        <>
+          <div className="row" style={{ gap: 18, alignItems: "center", marginBottom: 14 }}>
+            <div
+              className={`grade ${bandStatus(r.band)}`}
+              style={{ width: 84, height: 84, fontSize: 38, borderRadius: 18 }}
+            >
+              {r.score ?? "—"}
+            </div>
+            <div style={{ flex: 1 }}>
+              <Pill status={bandStatus(r.band)}>{r.band} light</Pill>
+              <div className="ink2" style={{ fontSize: 13, marginTop: 8 }}>
+                {r.recommendation}
+              </div>
+            </div>
+          </div>
+          <div>
+            {(r.drivers ?? []).map((d) => (
+              <div key={d.key} style={{ marginBottom: 9 }}>
+                <div className="row between" style={{ fontSize: 12 }}>
+                  <span className="ink2">{d.label}</span>
+                  <b className="tnum">{d.value}</b>
+                </div>
+                <Meter pct={d.value} color={DRIVER_COLOR[d.verdict] ?? COLORS.s1} />
+              </div>
+            ))}
+          </div>
+          {r.load_note && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+              Training-load penalty −{r.load_penalty} ({r.load_note}).
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function RiskCard() {
+  const risk = useAsync(() => api.risk(), []);
+  const r = risk.data;
+
+  return (
+    <Card
+      title="Overtraining & injury risk"
+      sub="Rule-based flags with the evidence behind each"
+      right={r && <Pill status={bandStatus(r.risk_band)}>{r.flag_count} flag{r.flag_count === 1 ? "" : "s"}</Pill>}
+    >
+      {risk.loading ? (
+        <div className="center" style={{ minHeight: 160 }}>
+          <div className="spinner" />
+        </div>
+      ) : !r || r.flags.length === 0 ? (
+        <div className="row" style={{ gap: 10, padding: "10px 0" }}>
+          <Pill status="good">Clear</Pill>
+          <span className="ink2" style={{ fontSize: 13 }}>
+            No active risk flags — training load and recovery look balanced.
+          </span>
+        </div>
+      ) : (
+        <div>
+          {r.flags.map((f) => (
+            <div className="rec" key={f.code} style={{ alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, paddingTop: 1 }}>
+                <Pill status={f.severity === "red" ? "alert" : "watch"}>{f.severity}</Pill>
+              </div>
+              <div>
+                <div className="title">{f.title}</div>
+                <div className="detail">{f.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function Overview() {
-  const readiness = useAsync(() => api.readiness(), []);
   const metrics = useAsync(() => api.metrics(90), []);
   const insights = useAsync(() => api.insights(), []);
 
-  if (metrics.loading || readiness.loading) return <Loading />;
+  if (metrics.loading) return <Loading />;
 
-  const r = readiness.data;
   const cards = metrics.data?.cards ?? [];
-  const comps = r?.components ?? {};
 
   return (
     <>
@@ -63,37 +148,14 @@ export default function Overview() {
         </div>
       </div>
 
-      <div className="grid cols-3" style={{ gridTemplateColumns: "1.1fr 1fr 1fr" }}>
-        <Card title="Today's Readiness" sub="Transparent composite — every driver shown">
-          <div className="row" style={{ gap: 18, alignItems: "center" }}>
-            <div
-              className={`grade ${statusFromScore(r?.score)}`}
-              style={{ width: 84, height: 84, fontSize: 40, borderRadius: 20 }}
-            >
-              {r?.score ?? "—"}
-            </div>
-            <div style={{ flex: 1 }}>
-              {Object.entries(comps).map(([k, v]) => (
-                <div key={k} style={{ marginBottom: 9 }}>
-                  <div className="row between" style={{ fontSize: 12 }}>
-                    <span className="ink2">{READINESS_LABELS[k] ?? titleize(k)}</span>
-                    <b className="tnum">{Math.round(v)}</b>
-                  </div>
-                  <Meter pct={v} color={scoreColor(v)} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-
-        {cards.slice(0, 2).map((c) => (
-          <MetricTile key={c.key} c={c} />
-        ))}
+      <div className="grid cols-2" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
+        <ReadinessCard />
+        <RiskCard />
       </div>
 
       <div className="section-title">Every metric, analyzed</div>
       <div className="grid cols-4">
-        {cards.slice(2).map((c) => (
+        {cards.map((c) => (
           <MetricTile key={c.key} c={c} />
         ))}
       </div>
@@ -103,7 +165,7 @@ export default function Overview() {
         <Card>
           {insights.data.insights.map((s, i) => (
             <div className="rec" key={i}>
-              <div className="num">✦</div>
+              <div className="num">{i + 1}</div>
               <div className="detail" style={{ color: "var(--ink)" }}>
                 {s}
               </div>

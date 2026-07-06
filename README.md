@@ -141,13 +141,19 @@ Open the **AI Coach** page and ask something like *"How's my training load
 this week?"* Until the key is set, the page shows a short reminder of these
 steps instead.
 
-**Privacy note.** Using the Coach is the one part of this app that talks to a
+**Privacy note.** Using the Coach is one of two parts of this app that talk to a
 service other than Garmin. When you send a message, compact summaries of your
 *already-local* analytics (the same numbers shown on the dashboard — e.g.
 recent training load, readiness components, sleep figures) are sent to
 Anthropic's API to generate the reply. Your Garmin password is never sent, and
 nothing is sent until you both add the key and use the Coach. If you'd rather
 keep everything fully local, simply don't set the key. See
+[SECURITY.md](SECURITY.md).
+
+The other is **run maps**: opening a workout with GPS shows its route on an
+OpenStreetMap background, which (like any web map) loads map tiles for the area
+you ran from OpenStreetMap's servers. The GPS track itself comes from Garmin and
+is cached locally. Don't open a run's map and no tiles are ever requested — see
 [SECURITY.md](SECURITY.md).
 
 ---

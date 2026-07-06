@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any
 
 import polars as pl
-from sqlalchemy import select
+from sqlalchemy import Date, DateTime, Float, Integer, select
 
 from app.db.engine import session_scope
 from app.db.models.core import Activity, DailyMetrics
@@ -262,6 +262,31 @@ def generate_insights(daily: pl.DataFrame, activities: pl.DataFrame) -> list[str
 # -- loaders (DB -> Polars) --------------------------------------------------
 
 
+def _model_schema(model: Any) -> dict[str, Any]:
+    """Explicit Polars dtype per model column.
+
+    Without this, ``pl.DataFrame`` infers each column's type from only the first
+    100 rows. A metric that is null for the first 100+ days (routine once a full
+    year is loaded — e.g. a sensor with no early data) would be inferred as the
+    ``Null`` dtype, then blow up when a real value appears at row 101. Deriving
+    the schema from the SQLAlchemy columns makes construction null-density-proof.
+    """
+    schema: dict[str, Any] = {}
+    for c in model.__table__.columns:
+        t = c.type
+        if isinstance(t, Integer):
+            schema[c.name] = pl.Int64
+        elif isinstance(t, Float):
+            schema[c.name] = pl.Float64
+        elif isinstance(t, DateTime):
+            schema[c.name] = pl.Datetime
+        elif isinstance(t, Date):
+            schema[c.name] = pl.Date
+        else:
+            schema[c.name] = pl.Utf8
+    return schema
+
+
 def load_daily(start: date | None = None, end: date | None = None) -> pl.DataFrame:
     with session_scope() as s:
         q = select(DailyMetrics)
@@ -271,7 +296,7 @@ def load_daily(start: date | None = None, end: date | None = None) -> pl.DataFra
             q = q.where(DailyMetrics.day <= end)
         rows = s.execute(q.order_by(DailyMetrics.day)).scalars().all()
         data = [{c.name: getattr(r, c.name) for c in DailyMetrics.__table__.columns} for r in rows]
-    return pl.DataFrame(data)
+    return pl.DataFrame(data, schema=_model_schema(DailyMetrics))
 
 
 def load_activities(start: date | None = None, end: date | None = None) -> pl.DataFrame:
@@ -283,4 +308,13 @@ def load_activities(start: date | None = None, end: date | None = None) -> pl.Da
             q = q.where(Activity.day <= end)
         rows = s.execute(q.order_by(Activity.start_time_local)).scalars().all()
         data = [{c.name: getattr(r, c.name) for c in Activity.__table__.columns} for r in rows]
-    return pl.DataFrame(data)
+    return pl.DataFrame(data, schema=_model_schema(Activity))
+
+
+def load_activity(activity_id: int) -> dict[str, Any] | None:
+    """One activity row by Garmin activity id, or None if it isn't stored."""
+    with session_scope() as s:
+        row = s.get(Activity, activity_id)
+        if row is None:
+            return None
+        return {c.name: getattr(row, c.name) for c in Activity.__table__.columns}

@@ -34,8 +34,8 @@ The dashboard and API bind to **localhost only**:
 - Docker publishes the port as `127.0.0.1:3000`, so nothing on your Wi-Fi
   or LAN can reach it.
 
-The app makes outbound connections to Garmin's API only — **with one opt-in
-exception: the AI Coach** (see below).
+The app makes outbound connections to Garmin's API only — **with two
+exceptions: the AI Coach and run maps** (both described below).
 
 ## The AI Coach and Anthropic (opt-in)
 
@@ -57,6 +57,22 @@ Coach.
 Chat history is stored locally in `data/garmin.db` (the `conversations` and
 `messages` tables) and is erased by the reset scripts along with everything
 else.
+
+## Run maps and OpenStreetMap
+
+When you open a workout's detail and it has GPS, the app shows the route on a
+map. Two things happen the first time you open a given run:
+
+- The app fetches that activity's detailed GPS track from **Garmin** (one extra
+  Garmin call) and caches it locally in `data/garmin.db`, so later views make no
+  further calls.
+- The **map background tiles** are loaded from the public **OpenStreetMap** tile
+  servers. Like any web map, this sends the map tile coordinates for the area
+  you're viewing to OpenStreetMap — enough to reveal roughly where you ran.
+
+Nothing else (no account info, no health data) is sent to OpenStreetMap. If you
+never open a run map, no tiles are ever requested. Indoor activities have no GPS
+and show no map.
 
 ## What is stored on disk
 

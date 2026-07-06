@@ -152,3 +152,8 @@ class GarminConnectCollector:
             list[dict[str, Any]],
             self._call("get_activities_by_date", start.isoformat(), end.isoformat()),
         )
+
+    def activity_details(self, activity_id: int) -> dict[str, Any]:
+        # Garmin's default maxchart=2000 already downsamples the per-sample
+        # streams to a manageable size; we downsample further at render time.
+        return cast(dict[str, Any], self._call("get_activity_details", str(activity_id)))

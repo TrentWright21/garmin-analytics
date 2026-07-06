@@ -12,24 +12,26 @@ import {
 } from "recharts";
 import { shortDate } from "../lib/format";
 
-// Resolved dark-mode hexes (SVG presentation attributes don't resolve CSS var()).
+// Resolved light-mode hexes (SVG presentation attributes don't resolve CSS var()).
+// Series + status are the dataviz validated LIGHT column; chrome is the cool-grey
+// scale from theme.css so charts sit flush on white card surfaces.
 export const COLORS = {
-  s1: "#3987e5",
-  s2: "#199e70",
-  s3: "#c98500",
+  s1: "#2a78d6",
+  s2: "#1baf7a",
+  s3: "#eda100",
   s4: "#008300",
-  s5: "#9085e9",
-  s6: "#e66767",
-  s7: "#d55181",
-  s8: "#d95926",
+  s5: "#4a3aa7",
+  s6: "#e34948",
+  s7: "#e87ba4",
+  s8: "#eb6834",
   good: "#0ca30c",
   warning: "#fab219",
   serious: "#ec835a",
   critical: "#d03b3b",
-  grid: "#2c2c2a",
-  baseline: "#383835",
-  muted: "#898781",
-  ink2: "#c3c2b7",
+  grid: "#eaecf0",
+  baseline: "#d0d5dd",
+  muted: "#667085",
+  ink2: "#475467",
 };
 
 export const SERIES_HEX = [
@@ -103,7 +105,7 @@ export function Sparkline({
       <AreaChart data={data} margin={{ top: 4, right: 2, bottom: 0, left: 2 }}>
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+            <stop offset="0%" stopColor={color} stopOpacity={0.14} />
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>

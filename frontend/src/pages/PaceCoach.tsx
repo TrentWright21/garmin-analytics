@@ -218,7 +218,7 @@ export default function PaceCoach() {
                 <XAxis dataKey="week" tickFormatter={(w) => `W${w}`} {...axisProps} />
                 <YAxis {...axisProps} width={40} unit="mi" />
                 <Tooltip
-                  cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                  cursor={{ fill: "rgba(16,24,40,0.05)" }}
                   content={<ChartTooltip labelFmt={(l) => `Week ${l}`} fmt={(v) => `${v} mi`} />}
                 />
                 <Bar dataKey="mileage" name="Weekly miles" radius={[3, 3, 0, 0]} isAnimationActive={false}>

@@ -179,7 +179,7 @@ export default function SleepCoach() {
                 <XAxis dataKey="range" {...axisProps} interval={0} angle={-12} dy={6} />
                 <YAxis {...axisProps} width={40} />
                 <Tooltip
-                  cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                  cursor={{ fill: "rgba(16,24,40,0.05)" }}
                   content={
                     <ChartTooltip
                       labelFmt={(l) => `${l} sleep`}
@@ -407,7 +407,7 @@ export default function SleepCoach() {
               <XAxis dataKey="day" tickFormatter={(d) => shortDate(String(d))} minTickGap={20} {...axisProps} />
               <YAxis {...axisProps} width={40} unit="h" />
               <Tooltip
-                cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                cursor={{ fill: "rgba(16,24,40,0.05)" }}
                 content={<ChartTooltip fmt={(v) => `${v} h vs need`} />}
               />
               <ReferenceLine y={0} stroke={COLORS.baseline} />

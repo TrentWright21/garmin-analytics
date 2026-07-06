@@ -119,7 +119,7 @@ export default function TrainingLoad() {
               <XAxis dataKey="day" tickFormatter={(d) => shortDate(String(d))} minTickGap={30} {...axisProps} />
               <YAxis width={40} {...axisProps} />
               <Tooltip
-                cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                cursor={{ fill: "rgba(16,24,40,0.05)" }}
                 content={<ChartTooltip fmt={(v) => (v == null ? "—" : Number(v).toFixed(2))} />}
               />
               <ReferenceLine y={2} stroke={COLORS.warning} strokeDasharray="4 4" />

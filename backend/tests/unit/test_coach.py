@@ -39,7 +39,9 @@ def temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def seed_metrics(n_days: int = 50) -> None:
     """Insert n_days of synthetic daily metrics + a few activities."""
-    end = date(2026, 7, 5)
+    # Anchor to today so the seeded window lines up with the tools' date.today()
+    # ranges — a fixed date drifts out of range once the calendar day rolls over.
+    end = date.today()
     with db.session_scope() as s:
         for i in range(n_days):
             day = end - timedelta(days=n_days - 1 - i)
@@ -253,9 +255,19 @@ class TestChatApi:
     def test_status_reflects_config(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Isolate from any real GA_ANTHROPIC_API_KEY in the developer's .env so
+        # the "not configured" branch is what's actually exercised.
+        import app.api.routes.chat as chat_route
+
+        monkeypatch.setattr(chat_route.coach_mod, "is_configured", lambda s: False)
         assert client.get("/api/coach/status").json() == {"configured": False}
 
-    def test_chat_not_configured_message(self, client: TestClient) -> None:
+    def test_chat_not_configured_message(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.api.routes.chat as chat_route
+
+        monkeypatch.setattr(chat_route.coach_mod, "is_configured", lambda s: False)
         r = client.post("/api/coach/chat", json={"message": "hello"})
         body = r.json()
         assert r.status_code == 200
