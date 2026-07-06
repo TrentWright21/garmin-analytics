@@ -1,11 +1,11 @@
-# Garmin Analytics - one-time setup for Windows.
+# Waypoint - one-time setup for Windows.
 # Right-click this file -> Run with PowerShell, or run .\setup.ps1 in a terminal.
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
 Write-Host ""
-Write-Host "=== Garmin Analytics setup ===" -ForegroundColor Cyan
+Write-Host "=== Waypoint setup ===" -ForegroundColor Cyan
 
 # 0. Sanity: are we in the right folder?
 if (-not (Test-Path "backend\app\cli.py")) {

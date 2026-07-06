@@ -103,7 +103,7 @@ def cmd_test_auth(collector: GarminCollector) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="garmin-analytics")
+    parser = argparse.ArgumentParser(prog="waypoint")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("test-auth", help="Verify Garmin login and fetch one day of data")
     p_sync = sub.add_parser("sync", help="Sync recent days (default 2)")

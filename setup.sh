@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Garmin Analytics - one-time setup for macOS / Linux.
+# Waypoint - one-time setup for macOS / Linux.
 # Run from the project folder:   ./setup.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
 echo ""
-echo "=== Garmin Analytics setup ==="
+echo "=== Waypoint setup ==="
 
 # 0. Sanity: are we in the right folder?
 if [ ! -f "backend/app/cli.py" ]; then

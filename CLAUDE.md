@@ -1,9 +1,13 @@
-# CLAUDE.md — Garmin Analytics Platform
+# CLAUDE.md — Waypoint (personal Garmin analytics platform)
 
 ## What this project is
 
-A personal Garmin analytics platform for ONE user (Trent) that provides insights
-Garmin Connect itself does not. It syncs data from Trent's Garmin account daily,
+**Waypoint** — "see what your watch doesn't tell you." A personal analytics
+platform for ONE user (Trent) over their Garmin data, providing insights Garmin
+Connect itself does not. ("Waypoint" is the product/display name; "Garmin" still
+refers to the data source and company. The Python package, `GA_` env prefix, and
+`data/` DB paths keep their existing names — this was a display-name rebrand.)
+It syncs data from Trent's Garmin account daily,
 stores it permanently in an append-only local database, runs analytics Garmin
 doesn't offer, and will serve a dark-mode React dashboard. Production quality is
 required: type hints, docstrings, tests, ruff, mypy --strict.

@@ -1,7 +1,10 @@
-# Garmin Analytics
+# Waypoint
 
-A personal Garmin dashboard you run on your own computer — the insights
-Garmin Connect doesn't give you: a science-backed **Sleep Coach**, Daniels
+**See what your watch doesn't tell you.**
+
+A personal analytics platform for your Garmin data that you run on your own
+computer — the insights Garmin Connect doesn't give you: a science-backed
+**Sleep Coach**, Daniels
 **Pace Coach**, training-load and readiness analytics (ACWR, monotony,
 strain, HRV baselines), and long-term trends over *your* data, stored
 permanently on *your* machine.

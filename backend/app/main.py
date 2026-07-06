@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Garmin Analytics",
+    title="Waypoint",
     version="0.1.0",
     lifespan=lifespan,
 )

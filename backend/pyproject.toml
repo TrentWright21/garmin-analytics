@@ -1,7 +1,7 @@
 [project]
 name = "garmin-analytics"
 version = "0.1.0"
-description = "Personal Garmin analytics platform - insights Garmin Connect doesn't give you"
+description = "Waypoint - personal analytics for your Garmin data; see what your watch doesn't tell you"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -1,4 +1,4 @@
-# Start the Garmin Analytics app at http://localhost:3000
+# Start the Waypoint app at http://localhost:3000
 # Builds the React dashboard on first run, then serves API + dashboard together.
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot

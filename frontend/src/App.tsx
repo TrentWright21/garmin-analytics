@@ -52,7 +52,7 @@ export default function App() {
           <div className="brand-mark">
             <Icon name="load" size={18} />
           </div>
-          <b>Garmin Analytics</b>
+          <b>Waypoint</b>
         </div>
       </header>
 
@@ -62,7 +62,7 @@ export default function App() {
             <Icon name="load" size={18} />
           </div>
           <div>
-            <b>Garmin Analytics</b>
+            <b>Waypoint</b>
             <span>Trent's personal coach</span>
           </div>
         </div>
