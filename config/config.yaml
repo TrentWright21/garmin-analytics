@@ -8,3 +8,17 @@ sync:
   hour: 6                # daily Garmin sync at 06:30 local
   minute: 30
   backfill_days: 30      # history fetched on very first run
+
+# Home location for the local weather feed (Open-Meteo, no API key needed).
+location:
+  name: Hartselle, AL
+  latitude: 34.4426
+  longitude: -86.9353
+
+# Your next goal event. Only name + date are required; distance_m / goal_time
+# are for actual races (they feed the pace planner). Delete this block to hide
+# the countdown, or change it to whatever event you're training for.
+event:
+  name: Mount Whitney Summit
+  date: 2026-08-01
+  kind: climb

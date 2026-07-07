@@ -310,6 +310,21 @@ def get_intensity_distribution(days: int = 42) -> str:
     return _js(fitness.intensity_distribution(ax.load_activities(start, end), _hr_max()))
 
 
+def get_briefing() -> str:
+    """Today's full morning brief in one call: the go/no-go daily snapshot.
+
+    Aggregates readiness (Red/Yellow/Green + drivers), injury-risk flags,
+    Fitness/Fatigue/Form, today's local weather with a dew-point heat advisory
+    for running, the training streak, a recovery timer (hours since the last
+    session and when the athlete is recovered), and the countdown to the goal
+    event. Use for "give me my morning briefing", "what should I do today",
+    or any broad "how am I doing right now" question.
+    """
+    from app.api.routes.briefing import build_briefing
+
+    return _js(build_briefing())
+
+
 def get_workout_analysis(activity_id: int) -> str:
     """Deep analysis of one workout by its Garmin activity id.
 
@@ -340,6 +355,7 @@ COACH_TOOLS: list[BetaFunctionTool[Any]] = [
     beta_tool(get_readiness_detail),
     beta_tool(get_risk_flags),
     beta_tool(get_intensity_distribution),
+    beta_tool(get_briefing),
     beta_tool(get_workout_analysis),
 ]
 

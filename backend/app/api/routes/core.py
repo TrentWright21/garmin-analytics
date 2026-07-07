@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Query
 
 from app.analytics import engine as ax
 from app.collectors.garmin_connect import GarminConnectCollector
-from app.collectors.sync import SyncEngine
+from app.collectors.sync import build_sync_engine
 from app.config import get_settings
 from app.logging import get_logger
 
@@ -77,7 +77,7 @@ def trigger_sync(
     """Kick a sync without blocking the request (the dashboard 'Sync now' button)."""
 
     def run() -> None:
-        SyncEngine(GarminConnectCollector(get_settings())).sync_recent(days=days)
+        build_sync_engine(GarminConnectCollector(get_settings())).sync_recent(days=days)
 
     background.add_task(run)
     return {"status": "sync started", "days": str(days)}

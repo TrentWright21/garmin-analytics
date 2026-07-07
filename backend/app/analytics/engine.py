@@ -16,6 +16,7 @@ from sqlalchemy import Date, DateTime, Float, Integer, select
 
 from app.db.engine import session_scope
 from app.db.models.core import Activity, DailyMetrics
+from app.db.models.weather import DailyWeather
 
 
 def _f(value: Any) -> float | None:
@@ -318,3 +319,16 @@ def load_activity(activity_id: int) -> dict[str, Any] | None:
         if row is None:
             return None
         return {c.name: getattr(row, c.name) for c in Activity.__table__.columns}
+
+
+def load_weather(start: date | None = None, end: date | None = None) -> pl.DataFrame:
+    """Daily weather rows as a Polars frame (empty frame if none collected yet)."""
+    with session_scope() as s:
+        q = select(DailyWeather)
+        if start:
+            q = q.where(DailyWeather.day >= start)
+        if end:
+            q = q.where(DailyWeather.day <= end)
+        rows = s.execute(q.order_by(DailyWeather.day)).scalars().all()
+        data = [{c.name: getattr(r, c.name) for c in DailyWeather.__table__.columns} for r in rows]
+    return pl.DataFrame(data, schema=_model_schema(DailyWeather))

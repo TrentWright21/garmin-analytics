@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api } from "./api";
 import { Icon } from "./components/icons";
 import Activities from "./pages/Activities";
+import Briefing from "./pages/Briefing";
 import Coach from "./pages/Coach";
 import Fitness from "./pages/Fitness";
 import Overview from "./pages/Overview";
@@ -12,6 +13,7 @@ import TrainingLoad from "./pages/TrainingLoad";
 import Trends from "./pages/Trends";
 
 const NAV = [
+  { to: "/briefing", icon: "briefing", label: "Daily Briefing" },
   { to: "/overview", icon: "overview", label: "Overview" },
   { to: "/fitness", icon: "fitness", label: "Fitness & Form" },
   { to: "/coach", icon: "coach", label: "AI Coach" },
@@ -90,7 +92,8 @@ export default function App() {
 
       <main className="main">
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} />
+          <Route path="/" element={<Navigate to="/briefing" replace />} />
+          <Route path="/briefing" element={<Briefing />} />
           <Route path="/overview" element={<Overview />} />
           <Route path="/fitness" element={<Fitness />} />
           <Route path="/coach" element={<Coach />} />
@@ -99,7 +102,7 @@ export default function App() {
           <Route path="/trends" element={<Trends />} />
           <Route path="/load" element={<TrainingLoad />} />
           <Route path="/activities" element={<Activities />} />
-          <Route path="*" element={<Navigate to="/overview" replace />} />
+          <Route path="*" element={<Navigate to="/briefing" replace />} />
         </Routes>
       </main>
 

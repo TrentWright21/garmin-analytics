@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from app.collectors.base import (
     CollectorAuthError,
@@ -22,7 +22,7 @@ from app.collectors.base import (
     GarminCollector,
 )
 from app.collectors.garmin_connect import GarminConnectCollector
-from app.config import REPO_ROOT, Settings, get_settings
+from app.config import REPO_ROOT, Settings, get_app_config, get_settings
 from app.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -98,7 +98,36 @@ def cmd_test_auth(collector: GarminCollector) -> int:
         print("  Last activities:")
         for act in recent:
             print(f"    - {act.get('startTimeLocal', '?')}  {act.get('activityName', '?')}")
-    print("\nAuth + data fetch: OK. Tokens saved — future runs won't need MFA.\n")
+    print("\nAuth + data fetch: OK. Tokens saved - future runs won't need MFA.\n")
+    return 0
+
+
+def cmd_weather_backfill(days: int) -> int:
+    """Backfill local weather history from Open-Meteo. No Garmin login needed."""
+    from app.collectors.sync import normalize_weather
+    from app.collectors.weather import OpenMeteoProvider, WeatherError
+    from app.db.engine import session_scope, store_raw
+
+    cfg = get_app_config()
+    lat, lon = cfg.location.latitude, cfg.location.longitude
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    provider = OpenMeteoProvider()
+    print(f"Fetching weather for {cfg.location.name}: {start} .. {end} (no Garmin calls)...")
+    try:
+        history = provider.daily_history(lat, lon, start, end)
+        with session_scope() as s:
+            store_raw(s, "weather_archive", end, history)
+        forecast = provider.forecast(lat, lon, days=7)
+        with session_scope() as s:
+            store_raw(s, "weather_forecast", date.today(), forecast)
+    except WeatherError as exc:
+        print(f"\nWeather fetch failed: {exc}", file=sys.stderr)
+        print("Check your internet connection, then run the same command again.", file=sys.stderr)
+        return 2
+    with session_scope() as s:
+        normalize_weather(s)
+    print("Done. Weather stored in the raw layer and normalized into daily_weather.")
     return 0
 
 
@@ -114,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
         "renormalize", help="Rebuild normalized tables from raw (no Garmin calls)"
     )
     p_norm.add_argument("--days", type=int, default=400)
+    p_weather = sub.add_parser(
+        "weather-backfill", help="Backfill local weather history (no Garmin calls)"
+    )
+    p_weather.add_argument("--days", type=int, default=365)
     args = parser.parse_args(argv)
 
     configure_logging()
@@ -124,9 +157,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.command == "test-auth":
         return cmd_test_auth(GarminConnectCollector(get_settings()))
+    if args.command == "weather-backfill":
+        return cmd_weather_backfill(args.days)
     if args.command == "renormalize":
-        from datetime import timedelta
-
         from app.collectors.sync import normalize_range
 
         end = date.today()
@@ -136,11 +169,9 @@ def main(argv: list[str] | None = None) -> int:
         print("Done.")
         return 0
     if args.command in ("sync", "backfill"):
-        from datetime import timedelta
+        from app.collectors.sync import build_sync_engine
 
-        from app.collectors.sync import SyncEngine
-
-        engine = SyncEngine(GarminConnectCollector(get_settings()))
+        engine = build_sync_engine(GarminConnectCollector(get_settings()))
         end = date.today()
         start = end - timedelta(days=args.days - 1)
         print(f"Syncing {start} .. {end} - this makes ~{14 * args.days} API calls, be patient.")

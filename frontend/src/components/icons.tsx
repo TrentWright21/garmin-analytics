@@ -4,6 +4,7 @@
 
 type IconName =
   | "overview"
+  | "briefing"
   | "coach"
   | "sleep"
   | "pace"
@@ -16,6 +17,18 @@ type IconName =
   | "close";
 
 const PATHS: Record<IconName, JSX.Element> = {
+  briefing: (
+    // Sunrise — the morning brief.
+    <>
+      <path d="M17 18a5 5 0 0 0-10 0" />
+      <line x1="12" y1="2" x2="12" y2="9" />
+      <line x1="4.2" y1="10.2" x2="5.6" y2="11.6" />
+      <line x1="18.4" y1="11.6" x2="19.8" y2="10.2" />
+      <line x1="1" y1="18" x2="23" y2="18" />
+      <line x1="8" y1="5.5" x2="12" y2="9" />
+      <line x1="16" y1="5.5" x2="12" y2="9" />
+    </>
+  ),
   overview: (
     <>
       <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />

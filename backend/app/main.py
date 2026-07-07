@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.briefing import router as briefing_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.coach import router as coach_router
 from app.api.routes.core import router as api_router
@@ -42,10 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     def daily_sync() -> None:
         from app.collectors.garmin_connect import GarminConnectCollector
-        from app.collectors.sync import SyncEngine
+        from app.collectors.sync import build_sync_engine
 
         try:
-            SyncEngine(GarminConnectCollector(get_settings())).sync_recent(days=2)
+            build_sync_engine(GarminConnectCollector(get_settings())).sync_recent(days=2)
         except Exception:
             log.exception("scheduled_sync.failed")
 
@@ -74,6 +75,7 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(performance_router)
+app.include_router(briefing_router)
 app.include_router(coach_router)
 app.include_router(chat_router)
 

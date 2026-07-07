@@ -284,6 +284,77 @@ export interface RouteData {
   slow_mps?: number | null;
 }
 
+// ---- morning briefing (M9) ----
+
+export interface WeatherToday {
+  available: boolean;
+  location?: string;
+  temp_high_f?: number | null;
+  temp_low_f?: number | null;
+  apparent_high_f?: number | null;
+  humidity_pct?: number | null;
+  dew_point_f?: number | null;
+  wind_mph?: number | null;
+}
+
+export interface HeatAdvisory {
+  available: boolean;
+  severity?: string; // none | minimal | low | moderate | high | extreme
+  dew_point_f?: number | null;
+  apparent_high_f?: number | null;
+  temp_high_f?: number | null;
+  advice?: string;
+}
+
+export interface TrainingStreak {
+  available: boolean;
+  current_streak?: number;
+  longest_streak?: number;
+  last_active?: string;
+  days_since_last?: number;
+  active_last_7?: number;
+  active_last_28?: number;
+}
+
+export interface RecoveryTimer {
+  available: boolean;
+  last_activity_at?: string;
+  last_activity_name?: string | null;
+  hours_since?: number;
+  estimated_recovery_hours?: number;
+  pct_recovered?: number;
+  recovered?: boolean;
+  next_intensity?: string;
+  recommendation?: string;
+}
+
+export interface EventCountdown {
+  available: boolean;
+  name?: string;
+  date?: string;
+  kind?: string;
+  days_until?: number;
+  weeks_until?: number;
+  is_past?: boolean;
+}
+
+export interface Briefing {
+  date: string;
+  readiness: ReadinessV2;
+  risk: RiskReport;
+  fitness: FitnessSummary;
+  streak: TrainingStreak;
+  recovery: RecoveryTimer;
+  weather: WeatherToday;
+  heat: HeatAdvisory;
+  event: EventCountdown;
+}
+
+export interface BodyBatteryReport {
+  days: { date: string | null; charged: number | null; drained: number | null }[];
+  series: { ts_ms: number; level: number }[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -327,6 +398,9 @@ export const api = {
   intensity: (days = 42) => get<IntensityDistribution>(`/analytics/intensity?days=${days}`),
   readinessV2: () => get<ReadinessV2>(`/analytics/readiness-v2`),
   risk: () => get<RiskReport>(`/analytics/risk`),
+  briefing: () => get<Briefing>(`/briefing`),
+  event: () => get<EventCountdown>(`/event`),
+  bodyBattery: (days = 7) => get<BodyBatteryReport>(`/metrics/body-battery?days=${days}`),
   sessions: (days = 90) => get<SessionListItem[]>(`/sessions?days=${days}`),
   session: (id: number) => get<SessionDetail>(`/session/${id}`),
   sessionRoute: (id: number) => get<RouteData>(`/session/${id}/route`),

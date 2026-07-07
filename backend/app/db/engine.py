@@ -20,8 +20,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import get_settings
 
 # Import all model modules so their tables register on Base.metadata before
-# create_all runs (chat models live in a separate module from the core ones).
+# create_all runs (chat + weather models live in separate modules from core).
 from app.db.models import chat as _chat_models  # noqa: F401
+from app.db.models import weather as _weather_models  # noqa: F401
 from app.db.models.core import Base, RawApiData
 
 _engine: Engine | None = None
@@ -103,6 +104,22 @@ def latest_raw(session: Session, endpoint: str, metric_date: date) -> Any | None
         .where(RawApiData.endpoint == endpoint, RawApiData.metric_date == metric_date)
         # id is the tie-breaker: when two revisions land in the same microsecond
         # (fetched_at ties), the later-inserted row still wins deterministically.
+        .order_by(RawApiData.fetched_at.desc(), RawApiData.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return json.loads(row.payload_json) if row else None
+
+
+def latest_raw_any(session: Session, endpoint: str) -> Any | None:
+    """Most recently fetched payload for an endpoint, regardless of date.
+
+    Weather payloads each span a whole date range (one archive/forecast call
+    covers many days), so they are read by "newest for this endpoint" rather
+    than per-day like the Garmin endpoints.
+    """
+    row = session.execute(
+        select(RawApiData)
+        .where(RawApiData.endpoint == endpoint)
         .order_by(RawApiData.fetched_at.desc(), RawApiData.id.desc())
         .limit(1)
     ).scalar_one_or_none()

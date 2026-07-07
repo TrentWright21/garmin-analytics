@@ -11,6 +11,7 @@ loudly at boot instead of silently at 3 a.m. during a sync job.
 
 from __future__ import annotations
 
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -33,6 +34,33 @@ class SyncConfig(BaseModel):
     backfill_days: int = Field(default=30, ge=1, description="Days fetched on first run")
 
 
+class LocationConfig(BaseModel):
+    """Home training location — used to fetch local weather (Open-Meteo).
+
+    Defaults to Hartselle, AL. Weather needs a lat/lon; the name is only for
+    display. Change these to move the weather feed to a different town.
+    """
+
+    name: str = "Hartselle, AL"
+    latitude: float = Field(default=34.4426, ge=-90.0, le=90.0)
+    longitude: float = Field(default=-86.9353, ge=-180.0, le=180.0)
+
+
+class EventConfig(BaseModel):
+    """A goal event to count down to. Deliberately generic — a summit hike, a
+    marathon, a 5K, or anything with a date all fit.
+
+    Only ``name`` and ``date`` are required. ``distance_m`` / ``goal_time`` are
+    for actual races (they feed the pace planner); a climb leaves them null.
+    """
+
+    name: str
+    date: date
+    kind: Literal["race", "climb", "hike", "other"] = "other"
+    distance_m: float | None = None
+    goal_time: str | None = None  # "3:30:00" for a race target; null for a climb
+
+
 class AppConfig(BaseModel):
     """Non-secret settings loaded from config/config.yaml."""
 
@@ -41,6 +69,9 @@ class AppConfig(BaseModel):
     timezone: str = "America/Chicago"
     units: Literal["imperial", "metric"] = "imperial"
     sync: SyncConfig = SyncConfig()
+    location: LocationConfig = LocationConfig()
+    # Optional: the athlete's next goal event. Absent -> no countdown surfaces.
+    event: EventConfig | None = None
 
     @classmethod
     def from_yaml(cls, path: Path = DEFAULT_CONFIG_YAML) -> AppConfig:
