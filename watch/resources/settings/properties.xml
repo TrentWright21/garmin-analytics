@@ -1,0 +1,8 @@
+<properties>
+    <!-- Where the watch fetches the briefing from. Default is the local backend
+         as seen by the Connect IQ simulator. For a real watch, set this to your
+         public tunnel URL (see watch/README.md). -->
+    <property id="apiUrl" type="string">http://127.0.0.1:3000</property>
+    <!-- Only needed if you set GA_WATCH_TOKEN on the backend (tunnel use). -->
+    <property id="apiToken" type="string"></property>
+</properties>

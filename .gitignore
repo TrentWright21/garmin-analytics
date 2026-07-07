@@ -1,22 +1,35 @@
-# Secrets — your Garmin login lives here. Never commit.
-.env
-
-# Personal data: SQLite database + Garmin OAuth tokens. Never commit.
-data/
-
 # Python
 .venv/
 __pycache__/
 *.pyc
-*.egg-info/
-.pytest_cache/
 .mypy_cache/
-.ruff_cache/
+.pytest_cache/
+*.egg-info/
 
-# Node / frontend build output
+# Node
 node_modules/
-frontend/dist/
+dist/
+build/
 
-# OS noise
+# Database
+*.db
+
+# Local data (SQLite DB + Garmin OAuth tokens) — NEVER commit
+data/
+
+# Environment
+.env
+.env.*
+
+# Connect IQ watch app — private signing key + build output, NEVER commit
+watch/developer_key
+watch/bin/
+*.prg
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db

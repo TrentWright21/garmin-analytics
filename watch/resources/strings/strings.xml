@@ -1,0 +1,5 @@
+<strings>
+    <string id="AppName">Waypoint</string>
+    <string id="apiUrlTitle">Backend URL</string>
+    <string id="apiTokenTitle">Watch token (optional)</string>
+</strings>

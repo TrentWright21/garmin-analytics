@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!--
+  Waypoint watch companion (M10). A Connect IQ "watch-app" that shows the
+  morning briefing from the local backend's /api/watch/briefing feed.
+
+  The product list below is a sensible default (common glance-capable devices).
+  If your watch isn't listed, add it with the VS Code command palette:
+  "Monkey C: Edit Products" (it writes the correct product ids for the devices
+  your SDK has installed). Removing devices you don't have is harmless.
+-->
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+    <iq:application id="fb726d9b4b4b481f829fa6a439ed7d3f" type="watch-app" name="@Strings.AppName" entry="WaypointApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.3.0">
+        <iq:products>
+            <iq:product id="epix2pro47mm"/>
+        </iq:products>
+        <iq:permissions>
+            <iq:uses-permission id="Communications"/>
+        </iq:permissions>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>

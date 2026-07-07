@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     # else keeps working. SecretStr keeps it out of reprs and logs.
     anthropic_api_key: SecretStr | None = None
 
+    # Shared secret for the watch feed (GA_WATCH_TOKEN). Optional, unset by
+    # default: on localhost (the simulator) the feed needs no guard. Set it ONLY
+    # if you expose the backend through a tunnel for a real watch, so the public
+    # endpoint isn't wide open. When set, /api/watch/* requires a matching ?token=.
+    watch_token: SecretStr | None = None
+
     database_url: str = f"sqlite:///{DEFAULT_DATA_DIR / 'garmin.db'}"
 
     environment: Literal["dev", "prod"] = "dev"

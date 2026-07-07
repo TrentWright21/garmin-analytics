@@ -1,0 +1,2 @@
+# Build config. The Monkey C toolchain auto-discovers source/ and resources/.
+project.manifest = manifest.xml

@@ -1,0 +1,8 @@
+<settings>
+    <setting propertyKey="@Properties.apiUrl" title="@Strings.apiUrlTitle">
+        <settingConfig type="alphaNumeric"/>
+    </setting>
+    <setting propertyKey="@Properties.apiToken" title="@Strings.apiTokenTitle">
+        <settingConfig type="alphaNumeric"/>
+    </setting>
+</settings>
