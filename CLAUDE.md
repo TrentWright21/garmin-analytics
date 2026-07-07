@@ -109,6 +109,15 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
 
 - Env fixed (BOM-less), auth verified (Trent Wright), 30-day backfill present &
   current, sleep/pace/metrics coaches live, dashboard built and served.
+- **2026-07-06 session:** M10 **watch companion app fixed & shipped to `main`**
+  (commit 577167c) — installed Temurin JDK 17, fixed the Monkey C callback type
+  errors, ran it live in the simulator on the Epix Pro 47mm, scrubbed Garmin
+  tokens + signing key out of git, added `watch/SIMULATOR_RUNBOOK.md`. See the
+  "Garmin watch companion app (M10)" section below.
+- **Trent's next goal: automated morning message (~60% done).** Scheduler + brief
+  content already exist; still need a notifier channel, a send job, and an
+  always-on deploy. Full breakdown in NEXT MILESTONES ("NEXT UP" item). He knows a
+  server deploy is required.
 - **Pending (needs Trent's OK — ~5k Garmin calls):** `.\backfill.ps1 365`. Only
   30 days of history are loaded, which is why the sleep-need confidence is
   "moderate", long-term insights are sparse, and early ACWR is inflated. The
@@ -234,8 +243,68 @@ Wiring:
   (b) loads OSM map tiles = reveals roughly where you ran to OSM's servers.
   Documented in README + SECURITY.md next to the AI-Coach note.
 
+## Garmin watch companion app (M10) — COMPLETE (built prior session; fixed & shipped 2026-07-06, commit 577167c on main)
+
+A **Connect IQ / Monkey C** app in `watch/` that shows the morning briefing
+on-device — 4 pages (Readiness, Recovery, Conditions, Goal Event) + a glance card.
+Pull-based: it fetches `GET /api/watch/briefing` and caches the last good copy.
+
+- **Backend**: `app/api/routes/briefing.py` adds `/api/watch/briefing` — a compact,
+  FLAT (scalars-only) projection of `/api/briefing`, sized for the watch's small
+  memory; reuses `build_briefing()`, no analytics duplicated. Optional
+  `GA_WATCH_TOKEN` (config.py) guards it when exposed over a tunnel; open on
+  localhost. Tests: `tests/unit/test_m10_watch.py`.
+- **App** (`watch/source/`): `BriefingClient.mc` (fetch + Storage cache +
+  Stale/Offline states), `WaypointView.mc` (4-page view), `WaypointGlanceView.mc`
+  (glance), `WaypointDelegate.mc` (paging/refresh). Settings `apiUrl`
+  (default `http://127.0.0.1:3000`) / `apiToken` in `watch/resources/settings/`.
+- **Build/run needs a Java JDK** — the Connect IQ compiler AND the VS Code Monkey C
+  language server are Java. Installed 2026-07-06: **Temurin JDK 17** at
+  `C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot` (on PATH + JAVA_HOME).
+  Symptom when missing: builds silently hang forever + "Monkey C Language Server
+  client: couldn't create connection to server". Restart VS Code after installing.
+- **2026-07-06 fix**: `onResponse` callbacks in `BriefingClient.mc` /
+  `WaypointGlanceView.mc` needed exact SDK-9.2 type signatures —
+  `(code as Lang.Number, resp as Null or Lang.Dictionary or Lang.String or
+  Toybox.PersistedContent.Iterator) as Void`. They had never compiled (Java was
+  missing, so the errors were never seen). Verified: `BUILD SUCCESSFUL`, app runs
+  in the simulator on `epix2pro47mm` (Trent's watch = Epix Pro Gen 2 47mm).
+- **Simulator gotcha**: shows `Offline (-1001)` (SECURE_CONNECTION_REQUIRED) until
+  you turn OFF the simulator's **Settings -> "Use Device HTTPS Requirements"** (the
+  local backend is plain HTTP). Per-session toggle.
+- **Docs**: `watch/README.md` (setup — now includes the Java prereq + the -1001
+  fix) and `watch/SIMULATOR_RUNBOOK.md` (quick run recipe, gotcha table, and a
+  command-line build/run fallback via `monkeybrains.jar` + `simulator.exe` +
+  `monkeydo.bat`).
+- **Git hygiene**: `data/` (Garmin OAuth tokens + SQLite DB) and
+  `watch/developer_key` (Connect IQ signing key) had been committed by earlier
+  careless commits ("Yeet"/"UIpdate") and were about to be pushed. Scrubbed from
+  the unpushed history and git-ignored (`.gitignore` now excludes `data/`,
+  `*.egg-info/`, `watch/developer_key`, `watch/bin/`, `*.prg`). They were never
+  pushed, so no Garmin re-auth needed. NEVER commit them.
+- **Real watch** (vs simulator) install = HTTPS tunnel (cloudflared) +
+  `GA_WATCH_TOKEN` — see README's "Optional: put it on your real watch". Not done.
+
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
+- **NEXT UP (Trent's ask) — Automated morning message + always-on deploy.**
+  Goal: a briefing pushed to Trent every morning without opening anything. Status
+  ~60%: the two hard pieces already exist — (a) the CONTENT (`build_briefing` ->
+  `/api/briefing` + `/api/watch/briefing`), and (b) a working SCHEDULER (APScheduler
+  in `main.py` lifespan already fires a daily job at `sync.hour:sync.minute` =
+  06:30 America/Chicago — currently only the Garmin sync). What's LEFT:
+  1. **Notifier** — pick a push channel and add `app/notify/`. Cheapest/simplest
+     for one user: **Telegram bot** or **ntfy.sh** (free, phone push) or **email
+     via SMTP**. Config a `GA_*` secret for the channel.
+  2. **Send job** — add a 2nd scheduled job (~06:35, after sync) that runs
+     `build_briefing` -> formats a short message (optionally Claude-polished via
+     `ai/coach.py`) -> sends via the notifier.
+  3. **Always-on deploy** — the scheduler only fires while the app runs; on
+     Trent's PC that's only during `.\start.ps1`. For a reliable 6:30 message the
+     app must run 24/7 → deploy the existing Docker image to a cheap VPS / Fly.io
+     / home Raspberry Pi. One-time Garmin MFA login on the server (mount `data/`
+     as a volume so tokens persist). This is the "deploy on a server" step Trent
+     already anticipated.
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
   recovery-day → best-run patterns, weekday patterns, plateau detection,
   anomaly detection (z-score on RHR/HRV), missed-training detection, mileage
