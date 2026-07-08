@@ -113,10 +113,13 @@ invisible to everyone who isn't on your tailnet.
 
 ---
 
-## 3. Set up the morning message (Telegram)
+## 3. Set up the Morning Readiness Brief (Telegram)
 
-Get a daily briefing pushed to your phone. Your paired Garmin watch will mirror
-the phone notification, so it shows on your wrist too.
+Get a daily brief pushed to your phone: your current state (sleep, HRV, resting
+HR, recovery, risk flags, yesterday's workout) **plus an AI-recommended workout
+for today** — chosen from your goal and today's recovery, with a hard safety rule
+that never prescribes intensity your recovery doesn't support. Your paired Garmin
+watch mirrors the phone notification, so it shows on your wrist too.
 
 1. **Create a bot:** in Telegram, message **@BotFather**, send `/newbot`, follow
    the prompts. It gives you a **bot token** like `123456:ABC-DEF…`.
@@ -131,24 +134,36 @@ the phone notification, so it shows on your wrist too.
    GA_TELEGRAM_CHAT_ID=your-numeric-id
    ```
 
-5. Turn it on in `config/config.yaml`:
+5. Turn it on and set your goal in `config/config.yaml`:
 
    ```yaml
    notify:
      enabled: true
      hour: 6
-     minute: 35        # a few minutes after the 06:30 sync
-     ai_polish: false  # set true to have Claude rewrite it (needs GA_ANTHROPIC_API_KEY)
+     minute: 30        # sends just after the 06:00 sync, so data is fresh
+     ai_polish: false  # leave false to keep the clean layout
+
+   goal:
+     focus: endurance  # marathon | half_marathon | 15k | 10k | 5k |
+                       # weight_loss | general_fitness | recovery | strength | climb
+     note: "Build aerobic base and climb prep for Mount Whitney"
    ```
 
-6. Restart and send yourself a test right now:
+   The send time uses your `timezone:` from the same file (that's the "app
+   timezone"). The workout is **AI-generated when `GA_ANTHROPIC_API_KEY` is set**;
+   without a key it falls back to a safe, rule-based workout — either way the
+   safety ceiling is enforced in code, not by the model.
+
+6. Restart, then **preview** it (no send) and **send a real test**:
 
    ```bash
    docker compose up -d
-   docker compose exec backend python -m app.cli notify-test
+   docker compose exec backend python -m app.cli notify-test --dry-run   # prints it
+   docker compose exec backend python -m app.cli notify-test             # sends it
    ```
 
-   Check your phone. From then on it sends automatically each morning.
+   Check your phone. From then on it sends automatically each morning (once per
+   day — a restart near 06:30 won't double-send).
 
 ---
 
@@ -206,6 +221,7 @@ it its own token. To use the Connect IQ watch app against this server:
 | Stop | `docker compose down` |
 | Logs | `docker compose logs -f` |
 | Health | `docker compose ps` |
-| Test the morning push | `docker compose exec backend python -m app.cli notify-test` |
+| Preview the morning brief | `docker compose exec backend python -m app.cli notify-test --dry-run` |
+| Send a morning-brief test | `docker compose exec backend python -m app.cli notify-test` |
 | Pull more history | `docker compose exec backend python -m app.cli backfill --days 365` |
 | Publish to tailnet | `tailscale serve --bg 3000` |

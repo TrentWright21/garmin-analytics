@@ -114,12 +114,15 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   errors, ran it live in the simulator on the Epix Pro 47mm, scrubbed Garmin
   tokens + signing key out of git, added `watch/SIMULATOR_RUNBOOK.md`. See the
   "Garmin watch companion app (M10)" section below.
-- **Trent's next goal: automated morning message — CODE NOW COMPLETE (2026-07-07).**
-  Auth, rate limiting, Telegram notifier + send job, nightly backups, and the
-  `DEPLOY.md` runbook are all built, tested (142 pass), and verified — nothing
-  committed/pushed/deployed yet. What's left is Trent's own deploy actions (app
-  password, Docker, Tailscale, Telegram bot). See the "Production hardening +
-  automated morning message" section below.
+- **Trent's next goal: automated morning message — DONE + DEPLOYED LIVE (2026-07-07).**
+  The app now runs 24/7 on a **DigitalOcean droplet** (Ubuntu 24.04, Docker,
+  `restart: unless-stopped`) reachable from Trent's phone + PC over **Tailscale**
+  (`tailscale serve` HTTPS at `https://waypoint.taild6a854.ts.net/`, tailnet-only)
+  behind the app password. The **Morning Readiness Brief** (current state + an
+  AI-recommended workout with a deterministic safety ceiling) is built, tested
+  (156 pass), and pushed. See "Morning Readiness Brief + live deployment" below.
+  Remaining for Trent: set the Telegram bot secrets + `notify.enabled: true` on
+  the server and it's fully hands-off.
 - **Pending (needs Trent's OK — ~5k Garmin calls):** `.\backfill.ps1 365`. Only
   30 days of history are loaded, which is why the sleep-need confidence is
   "moderate", long-term insights are sparse, and early ACWR is inflated. The
@@ -355,18 +358,83 @@ morning push. Full runbook in `DEPLOY.md`.
   `GA_TELEGRAM_BOT_TOKEN` + `GA_TELEGRAM_CHAT_ID` (morning push),
   `GA_WATCH_TOKEN` (real watch), `GA_ANTHROPIC_API_KEY` (AI Coach + optional
   polish) — all optional locally, `GA_APP_PASSWORD` required in prod.
-- **STILL LEFT (Trent's action, not code)**: pick the app password, `docker
-  compose up -d --build`, install Tailscale on PC + phone + `tailscale serve --bg
-  3000`, create the Telegram bot and flip `notify.enabled: true`. Then optionally
-  commit/push. See `DEPLOY.md`.
+- **DEPLOYED 2026-07-07** (see next section): all of the above is live on a
+  DigitalOcean droplet over Tailscale. Only the Telegram secrets remain to enable
+  the daily push.
+
+## Morning Readiness Brief + live deployment (2026-07-07)
+
+**The feature Trent asked for: a daily Telegram brief with an AI-recommended
+workout, safety-gated.** Built on top of the existing `build_briefing()` +
+`app/notify/` + APScheduler (no rebuild). 156 tests pass, ruff + mypy --strict
+clean, verified end-to-end via a real `notify-test --dry-run`.
+
+- **`app/ai/morning_brief.py`** — the agent, cleanly separated:
+  * `intensity_ceiling(readiness, risk, recovery)` — **deterministic, auditable
+    safety** (pure). Scores bad signals (red readiness +2, each risk flag +1/+2 by
+    severity, unrecovered last session +1) -> ceiling `rest`(3+)/`recovery`(2)/
+    `easy`(1)/`hard`(0). Missing readiness (band `unknown`) -> `easy`. This is the
+    "never a hard workout on a bad-recovery day" rule, enforced in CODE not the LLM.
+  * `build_workout(settings, goal, brief, recent, latest, *, today, client_factory)`
+    — computes the ceiling, asks Claude (`claude-opus-4-8`, one `messages.create`,
+    JSON out) for a workout WITHIN the ceiling, then **clamps `intensity` back
+    under the ceiling** (defence in depth) and forces `workout_type` to rest/
+    recovery if clamped there. `client_factory` is the test seam (inject a fake).
+  * `fallback_workout(...)` — deterministic, goal-aware workout used when there's
+    NO `GA_ANTHROPIC_API_KEY` or on ANY LLM/parse error, so the message is never
+    lost and is always safe. `_yesterday_was_hard` avoids back-to-back hard days.
+  * `gather_context()` — the only DB-touching fn (loads brief + last 14d
+    activities + last-night metrics); everything else is pure -> unit-testable.
+- **`GoalConfig`** in `config.py` (`focus` free label + optional `note`) +
+  `goal:` block in `config.yaml`. Configurable, NOT hardcoded. Default focus
+  `endurance` / Whitney note. Shapes the workout recommendation.
+- **`app/notify/message.py`** — new `compose_morning_message` + `format_morning_message`
+  produce the fixed layout: **Current State / Goal / Today's Workout / Why / Watch
+  out** (sleep, HRV, RHR, Body Battery, stress, risk flags, yesterday's workout,
+  goal + event countdown, the workout + why + safer fallback). Plus a **once-per-day
+  dedup guard** (`data/last_morning_brief.txt`) so a restart near send-time can't
+  double-send; `send_morning_briefing(..., force=False)` (scheduler) vs `force=True`
+  (manual CLI). `ai_polish` (optional whole-message prose rewrite) kept but default off.
+- **Scheduling**: reused the APScheduler morning job; `config.yaml` now syncs at
+  **06:00** and sends the brief at **06:30** (brief after sync = fresh data). The
+  scheduler timezone is `config.timezone` (= the "app timezone").
+- **CLI**: `python -m app.cli notify-test` sends now (force); `--dry-run` prints
+  the composed message without sending (works even with the channel unconfigured).
+- **Tests**: `tests/unit/test_morning_brief.py` (15) — ceiling good/poor/missing/
+  no-goal, fallback determinism + respects ceiling + avoids back-to-back hard, AI
+  path with a fake client, the over-ceiling clamp, bad-response fallback, message
+  layout. `test_notify.py` extended: dedup (2nd auto-send suppressed, forced send
+  goes through), compose has all sections. **Test isolation**: the dev `.env` has
+  a real `GA_ANTHROPIC_API_KEY`, so send/compose tests null `settings.anthropic_api_key`
+  to stay offline (same gotcha as the coach tests — see AI Coach section).
+
+### Live deployment (the actual server)
+
+- **Host**: DigitalOcean droplet `waypoint` (Ubuntu 24.04, $6/mo 1GB + a 2GB
+  swapfile so the frontend Docker build doesn't OOM). Public IPv4 kept for SSH +
+  outbound; app bound to `127.0.0.1:3000`, never on the public internet.
+- **Deploy flow**: the repo is PUBLIC on GitHub (`TrentWright21/garmin-analytics`,
+  no secrets tracked) -> `git clone` on the droplet, `docker compose build`,
+  `.env` created on the server (Garmin creds + `GA_APP_PASSWORD`), one-time
+  `test-auth` MFA login (tokens in the mounted `data/` volume). Updates =
+  **`git pull` + `docker compose up -d --build`** on the droplet.
+- **Data-dir perms gotcha (Linux only)**: the bind-mounted host `data/` must be
+  writable by the container's non-root `runner` (uid 1000): `chown -R 1000:1000
+  data` before first `test-auth`, or token/db writes fail with permission errors
+  (never surfaced on Windows Docker Desktop). Documented so future deploys don't trip.
+- **Tailscale**: installed on the droplet + Trent's iPhone + PC; HTTPS via
+  `tailscale serve --bg 3000` (needs "Enable HTTPS" in the tailnet admin DNS page).
+  URL `https://waypoint.taild6a854.ts.net/` — tailnet-only. The app allows any Host
+  header (empty `allowed_hosts`) which is correct for the varying `.ts.net` name.
 
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
-- **NEXT UP — actually deploy** (all code above is done). Follow `DEPLOY.md`:
-  set `GA_APP_PASSWORD`, bring up Docker, put it on Tailscale, wire Telegram. The
-  scheduler only fires while the app runs, so an always-on host (Trent's PC left
-  on, or a Raspberry Pi) is what makes the 06:35 message reliable. One-time Garmin
-  MFA login on the host with `data/` mounted as a volume so tokens persist.
+- **NEXT UP — enable the Telegram push on the live server** (deploy is DONE).
+  On the droplet: add `GA_TELEGRAM_BOT_TOKEN` + `GA_TELEGRAM_CHAT_ID` to `.env`,
+  set `notify.enabled: true` in `config.yaml`, `git pull` + `docker compose up -d
+  --build`, test with `docker compose exec backend python -m app.cli notify-test`.
+  Optional: add `GA_ANTHROPIC_API_KEY` on the server so the workout is AI-generated
+  (otherwise the safe rule-based fallback is used). Then it's fully hands-off.
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
   recovery-day → best-run patterns, weekday patterns, plateau detection,
   anomaly detection (z-score on RHR/HRV), missed-training detection, mileage

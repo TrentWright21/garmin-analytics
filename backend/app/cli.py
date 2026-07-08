@@ -131,12 +131,21 @@ def cmd_weather_backfill(days: int) -> int:
     return 0
 
 
-def cmd_notify_test() -> int:
-    """Build today's briefing and push it to the configured channel now."""
+def cmd_notify_test(dry_run: bool = False) -> int:
+    """Build today's Morning Readiness Brief; preview it (--dry-run) or send it now."""
+    settings = get_settings()
+    cfg = get_app_config()
+
+    if dry_run:
+        from app.notify.message import compose_morning_message
+
+        title, text = compose_morning_message(settings, cfg)
+        print(f"{title}\n\n{text}")
+        return 0
+
     from app.notify import is_configured
     from app.notify.message import send_morning_briefing
 
-    settings = get_settings()
     if not is_configured(settings):
         print(
             "\nNo notification channel configured. Set GA_TELEGRAM_BOT_TOKEN and "
@@ -145,7 +154,7 @@ def cmd_notify_test() -> int:
         )
         return 1
     print("Building today's briefing and sending it...")
-    if send_morning_briefing(settings, get_app_config()):
+    if send_morning_briefing(settings, cfg, force=True):
         print("Sent. Check your phone.")
         return 0
     print("\nSend failed - see the log line above for the reason.", file=sys.stderr)
@@ -168,7 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         "weather-backfill", help="Backfill local weather history (no Garmin calls)"
     )
     p_weather.add_argument("--days", type=int, default=365)
-    sub.add_parser("notify-test", help="Send today's briefing to your phone (test the notifier)")
+    p_notify = sub.add_parser(
+        "notify-test", help="Send today's Morning Readiness Brief (or --dry-run to preview)"
+    )
+    p_notify.add_argument(
+        "--dry-run", action="store_true", help="Print the message instead of sending it"
+    )
     args = parser.parse_args(argv)
 
     configure_logging()
@@ -182,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "weather-backfill":
         return cmd_weather_backfill(args.days)
     if args.command == "notify-test":
-        return cmd_notify_test()
+        return cmd_notify_test(dry_run=args.dry_run)
     if args.command == "renormalize":
         from app.collectors.sync import normalize_range
 

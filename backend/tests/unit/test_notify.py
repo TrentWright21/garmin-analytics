@@ -91,10 +91,11 @@ def test_send_morning_briefing_unconfigured_returns_false() -> None:
     assert send_morning_briefing(Settings(), AppConfig()) is False
 
 
-def test_send_morning_briefing_delivers(
+def test_send_morning_briefing_delivers_and_dedups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GA_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+    monkeypatch.setattr("app.notify.message._STATE_FILE", tmp_path / "last_brief.txt")
     get_settings.cache_clear()
     db.reset_engine_for_tests()
 
@@ -105,9 +106,42 @@ def test_send_morning_briefing_delivers(
             delivered.append((title, text))
 
     monkeypatch.setattr("app.notify.message.build_notifier", lambda _s: Recorder())
-    ok = send_morning_briefing(Settings(), AppConfig())
-    assert ok is True
+    cfg = AppConfig()
+    settings = Settings()
+    settings.anthropic_api_key = None  # keep the workout on the offline fallback path
+
+    # First auto-send delivers the structured Morning Readiness Brief.
+    assert send_morning_briefing(settings, cfg) is True
     assert len(delivered) == 1
+    assert "Morning Readiness Brief" in delivered[0][0]
+
+    # Second auto-send the same day is suppressed (restart-near-06:30 guard).
+    assert send_morning_briefing(settings, cfg) is False
+    assert len(delivered) == 1
+
+    # A forced (manual CLI) send still goes through.
+    assert send_morning_briefing(settings, cfg, force=True) is True
+    assert len(delivered) == 2
+
+    get_settings.cache_clear()
+    db.reset_engine_for_tests()
+
+
+def test_compose_morning_message_has_all_sections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.notify.message import compose_morning_message
+
+    monkeypatch.setenv("GA_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+    get_settings.cache_clear()
+    db.reset_engine_for_tests()
+
+    settings = Settings()
+    settings.anthropic_api_key = None  # keep the workout on the offline fallback path
+    title, text = compose_morning_message(settings, AppConfig())
+    assert "Morning Readiness Brief" in title
+    for section in ("Current State:", "Goal:", "Today's Workout:", "Why:", "Watch out:"):
+        assert section in text
 
     get_settings.cache_clear()
     db.reset_engine_for_tests()

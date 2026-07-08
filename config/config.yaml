@@ -5,19 +5,30 @@ timezone: America/Chicago
 units: imperial
 
 sync:
-  hour: 6                # daily Garmin sync at 06:30 local
-  minute: 30
+  hour: 6                # daily Garmin sync at 06:00 local (before the 06:30 brief)
+  minute: 0
   backfill_days: 30      # history fetched on very first run
 
-# Automated morning message. Off by default. Turn on `enabled` AND set the
-# channel secrets in .env (GA_TELEGRAM_BOT_TOKEN / GA_TELEGRAM_CHAT_ID) to get a
-# daily push a few minutes after the sync. `ai_polish` rewrites the brief with
-# Claude (needs GA_ANTHROPIC_API_KEY; one API call per morning). See DEPLOY.md.
+# Automated Morning Readiness Brief. Off by default. Turn on `enabled` AND set
+# the channel secrets in .env (GA_TELEGRAM_BOT_TOKEN / GA_TELEGRAM_CHAT_ID) to
+# get a daily push. Default 06:30 — just after the 06:00 sync, so it reflects
+# fresh data. The workout recommendation uses Claude automatically when
+# GA_ANTHROPIC_API_KEY is set (a safe rule-based workout is used otherwise).
+# `ai_polish` optionally rewrites the whole message as prose (extra Claude call);
+# leave false to keep the structured layout. See DEPLOY.md.
 notify:
   enabled: false
   hour: 6
-  minute: 35
+  minute: 30
   ai_polish: false
+
+# Your active training goal. Shapes the daily workout recommendation. Change
+# `focus` whenever the goal changes; examples: marathon, half_marathon, 15k,
+# 10k, 5k, weight_loss, general_fitness, recovery, strength, endurance, climb.
+# `note` is optional free text the coach will honor (a target, a niggle, etc.).
+goal:
+  focus: endurance
+  note: "Build aerobic base and climb prep for Mount Whitney"
 
 # Home location for the local weather feed (Open-Meteo, no API key needed).
 location:

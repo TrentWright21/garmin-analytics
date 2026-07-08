@@ -49,6 +49,21 @@ class NotifyConfig(BaseModel):
     ai_polish: bool = False
 
 
+class GoalConfig(BaseModel):
+    """The athlete's active training goal — shapes the morning workout rec.
+
+    Deliberately not hardcoded: ``focus`` is a free label the coach reasons over
+    (e.g. ``marathon``, ``half_marathon``, ``15k``, ``10k``, ``5k``,
+    ``weight_loss``, ``general_fitness``, ``recovery``, ``strength``,
+    ``endurance``, ``climb``). ``note`` is optional free text for extra context
+    (a target date, a niggle to respect, "build aerobic base", etc.). Change
+    these in ``config.yaml`` whenever the goal changes.
+    """
+
+    focus: str = "general_fitness"
+    note: str | None = None
+
+
 class LocationConfig(BaseModel):
     """Home training location — used to fetch local weather (Open-Meteo).
 
@@ -86,6 +101,7 @@ class AppConfig(BaseModel):
     sync: SyncConfig = SyncConfig()
     location: LocationConfig = LocationConfig()
     notify: NotifyConfig = NotifyConfig()
+    goal: GoalConfig = GoalConfig()
     # Extra browser origins allowed to call the API cross-origin (prod). Empty is
     # the safe default for a same-origin deploy (dashboard served by FastAPI). The
     # Vite dev server origin is always allowed in dev; see main.py.
