@@ -37,6 +37,27 @@ The dashboard and API bind to **localhost only**:
 The app makes outbound connections to Garmin's API only — **with two
 exceptions: the AI Coach and run maps** (both described below).
 
+## Running it on a server (production)
+
+If you follow [DEPLOY.md](DEPLOY.md) to run the app 24/7 and reach it from your
+phone, the security model tightens rather than loosens:
+
+- **A login password is required.** In production (`GA_ENVIRONMENT=prod`) the
+  app **refuses to start** without `GA_APP_PASSWORD`, and every page and API
+  call then requires it. The password is checked in constant time and never
+  stored anywhere except your `.env`; the browser holds a short-lived signed
+  token (30-day expiry), not the password.
+- **The interactive API docs are disabled** in production.
+- **The recommended network path is Tailscale**, a private WireGuard network
+  only your own devices can join — so the app is *never* exposed to the public
+  internet or even your local Wi‑Fi. Tailscale also provides HTTPS, so traffic
+  between your phone and the server is encrypted.
+- **Login attempts and syncs are rate-limited** to blunt password guessing and
+  to protect your Garmin account from accidental hammering.
+
+This means personal health data and your Garmin credentials stay behind both a
+private network and a password — not on an open port.
+
 ## The AI Coach and Anthropic (opt-in)
 
 The AI Coach is off unless you add `GA_ANTHROPIC_API_KEY` to your `.env`. When

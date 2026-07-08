@@ -12,16 +12,21 @@ from __future__ import annotations
 from typing import Any
 
 import anthropic
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.ai import coach as coach_mod
 from app.config import get_settings
 from app.db import chat as store
 from app.logging import get_logger
+from app.ratelimit import RateLimiter, rate_limiter
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api/coach")
+
+# Each chat turn can spend Anthropic credits — cap the rate so a runaway client
+# can't rack up cost. 20/min is generous for a person typing.
+_chat_limiter = RateLimiter(max_calls=20, window_s=60.0)
 
 
 class ChatRequest(BaseModel):
@@ -49,7 +54,7 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
     return {"id": conversation_id, "messages": store.get_messages(conversation_id)}
 
 
-@router.post("/chat")
+@router.post("/chat", dependencies=[Depends(rate_limiter(_chat_limiter))])
 def chat(req: ChatRequest) -> dict[str, Any]:
     """Send a message; get the assistant's reply. Creates a conversation if none given."""
     settings = get_settings()

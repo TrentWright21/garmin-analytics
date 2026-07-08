@@ -34,6 +34,21 @@ class SyncConfig(BaseModel):
     backfill_days: int = Field(default=30, ge=1, description="Days fetched on first run")
 
 
+class NotifyConfig(BaseModel):
+    """Automated morning-message push (M9+ notifier).
+
+    Off by default. When ``enabled`` and the channel's secrets are set (e.g.
+    ``GA_TELEGRAM_BOT_TOKEN`` / ``GA_TELEGRAM_CHAT_ID``), a scheduled job sends
+    the daily brief to your phone. ``ai_polish`` optionally rewrites the brief
+    with Claude (costs one Anthropic call per morning; needs GA_ANTHROPIC_API_KEY).
+    """
+
+    enabled: bool = False
+    hour: int = Field(default=6, ge=0, le=23, description="Local hour for the morning push")
+    minute: int = Field(default=35, ge=0, le=59)
+    ai_polish: bool = False
+
+
 class LocationConfig(BaseModel):
     """Home training location — used to fetch local weather (Open-Meteo).
 
@@ -70,6 +85,14 @@ class AppConfig(BaseModel):
     units: Literal["imperial", "metric"] = "imperial"
     sync: SyncConfig = SyncConfig()
     location: LocationConfig = LocationConfig()
+    notify: NotifyConfig = NotifyConfig()
+    # Extra browser origins allowed to call the API cross-origin (prod). Empty is
+    # the safe default for a same-origin deploy (dashboard served by FastAPI). The
+    # Vite dev server origin is always allowed in dev; see main.py.
+    cors_origins: list[str] = []
+    # Hostnames the server answers to (TrustedHostMiddleware). Empty = allow any
+    # (correct for Tailscale, where the tailnet name varies). Set to lock it down.
+    allowed_hosts: list[str] = []
     # Optional: the athlete's next goal event. Absent -> no countdown surfaces.
     event: EventConfig | None = None
 
@@ -109,6 +132,19 @@ class Settings(BaseSettings):
     # if you expose the backend through a tunnel for a real watch, so the public
     # endpoint isn't wide open. When set, /api/watch/* requires a matching ?token=.
     watch_token: SecretStr | None = None
+
+    # App login password (GA_APP_PASSWORD). When set, every /api/* endpoint (except
+    # login and the separately-guarded watch feed) requires a session token minted
+    # by POST /api/login. Unset = auth OFF (safe only on a trusted localhost). In
+    # prod the app refuses to start without it (fail-closed; see main.py lifespan).
+    # No separate signing key is needed: session tokens are HMAC-signed with a key
+    # derived from this password, so rotating the password invalidates old sessions.
+    app_password: SecretStr | None = None
+
+    # Telegram morning-message channel (GA_TELEGRAM_BOT_TOKEN / GA_TELEGRAM_CHAT_ID).
+    # Both must be set for the notifier to send; otherwise it reports "not configured".
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
 
     database_url: str = f"sqlite:///{DEFAULT_DATA_DIR / 'garmin.db'}"
 

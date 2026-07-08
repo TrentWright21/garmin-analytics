@@ -5,16 +5,21 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.analytics import engine as ax
 from app.collectors.garmin_connect import GarminConnectCollector
 from app.collectors.sync import build_sync_engine
 from app.config import get_settings
 from app.logging import get_logger
+from app.ratelimit import RateLimiter, rate_limiter
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api")
+
+# Protect the Garmin account: cap manual syncs so a stuck client or reload loop
+# can't hammer Garmin into a 429 lockout. 5/min is far more than a human needs.
+_sync_limiter = RateLimiter(max_calls=5, window_s=60.0)
 
 
 def _range(days: int) -> tuple[date, date]:
@@ -70,7 +75,7 @@ def insights(days: int = Query(default=365, ge=30, le=3650)) -> dict[str, list[s
     return {"insights": ax.generate_insights(daily, acts)}
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(rate_limiter(_sync_limiter))])
 def trigger_sync(
     background: BackgroundTasks, days: int = Query(default=2, ge=1, le=365)
 ) -> dict[str, str]:

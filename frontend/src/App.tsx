@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { api } from "./api";
+import { api, authApi, getToken } from "./api";
 import { Icon } from "./components/icons";
+import Login from "./components/Login";
 import Activities from "./pages/Activities";
 import Briefing from "./pages/Briefing";
 import Coach from "./pages/Coach";
@@ -24,10 +25,45 @@ const NAV = [
   { to: "/activities", icon: "activities", label: "Activities" },
 ] as const;
 
+type AuthState = "loading" | "required" | "ok";
+
 export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [authState, setAuthState] = useState<AuthState>("loading");
+  const [authRequired, setAuthRequired] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    authApi
+      .status()
+      .then(({ auth_required }) => {
+        if (!alive) return;
+        setAuthRequired(auth_required);
+        // Auth off -> straight in. Auth on -> in only if we already hold a token
+        // (an expired/invalid one self-corrects: the first API 401 bounces here).
+        setAuthState(!auth_required || getToken() ? "ok" : "required");
+      })
+      .catch(() => alive && setAuthState("ok")); // status unreachable: don't hard-block
+    // Any request that 401s clears the token and asks us to show the login gate.
+    const onUnauthorized = () => {
+      setAuthRequired(true);
+      setAuthState("required");
+    };
+    window.addEventListener("waypoint-unauthorized", onUnauthorized);
+    return () => {
+      alive = false;
+      window.removeEventListener("waypoint-unauthorized", onUnauthorized);
+    };
+  }, []);
+
+  if (authState === "loading") {
+    return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>…</div>;
+  }
+  if (authState === "required") {
+    return <Login onSuccess={() => setAuthState("ok")} />;
+  }
 
   async function syncNow() {
     setSyncing(true);
@@ -86,6 +122,18 @@ export default function App() {
           <Icon name="sync" size={15} />
           {syncing ? "Syncing…" : "Sync now"}
         </button>
+        {authRequired && (
+          <button
+            className="btn"
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              authApi.logout();
+              setAuthState("required");
+            }}
+          >
+            Log out
+          </button>
+        )}
       </aside>
 
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}

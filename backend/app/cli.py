@@ -131,6 +131,27 @@ def cmd_weather_backfill(days: int) -> int:
     return 0
 
 
+def cmd_notify_test() -> int:
+    """Build today's briefing and push it to the configured channel now."""
+    from app.notify import is_configured
+    from app.notify.message import send_morning_briefing
+
+    settings = get_settings()
+    if not is_configured(settings):
+        print(
+            "\nNo notification channel configured. Set GA_TELEGRAM_BOT_TOKEN and "
+            "GA_TELEGRAM_CHAT_ID in your .env (see DEPLOY.md), then try again.",
+            file=sys.stderr,
+        )
+        return 1
+    print("Building today's briefing and sending it...")
+    if send_morning_briefing(settings, get_app_config()):
+        print("Sent. Check your phone.")
+        return 0
+    print("\nSend failed - see the log line above for the reason.", file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="waypoint")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -147,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         "weather-backfill", help="Backfill local weather history (no Garmin calls)"
     )
     p_weather.add_argument("--days", type=int, default=365)
+    sub.add_parser("notify-test", help="Send today's briefing to your phone (test the notifier)")
     args = parser.parse_args(argv)
 
     configure_logging()
@@ -159,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_test_auth(GarminConnectCollector(get_settings()))
     if args.command == "weather-backfill":
         return cmd_weather_backfill(args.days)
+    if args.command == "notify-test":
+        return cmd_notify_test()
     if args.command == "renormalize":
         from app.collectors.sync import normalize_range
 

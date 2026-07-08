@@ -204,13 +204,20 @@ def build_watch_briefing() -> dict[str, Any]:
 def watch_briefing(token: str | None = Query(default=None)) -> dict[str, Any]:
     """Compact briefing for the Connect IQ watch app.
 
-    Guard is opt-in: if ``GA_WATCH_TOKEN`` is unset (the localhost/simulator
-    default) the feed is open; if set (for a tunneled real watch) a matching
-    ``?token=`` is required. Compared in constant time.
+    This feed bypasses the app login (a watch can't do the browser token flow),
+    so its guard is separate. In dev it's open when ``GA_WATCH_TOKEN`` is unset
+    (localhost/simulator). In prod it is **fail-closed**: an unset token means
+    the feed refuses rather than serving your data unauthenticated. When the
+    token is set, a matching ``?token=`` is required (constant-time compare).
     """
-    configured = get_settings().watch_token
-    if configured is not None and not secrets.compare_digest(
-        token or "", configured.get_secret_value()
-    ):
+    settings = get_settings()
+    configured = settings.watch_token
+    if configured is None:
+        if settings.environment == "prod":
+            raise HTTPException(
+                status_code=401,
+                detail="watch feed disabled: set GA_WATCH_TOKEN to enable it in production",
+            )
+    elif not secrets.compare_digest(token or "", configured.get_secret_value()):
         raise HTTPException(status_code=401, detail="invalid or missing watch token")
     return build_watch_briefing()

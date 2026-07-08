@@ -20,6 +20,7 @@ data/
 # Environment
 .env
 .env.*
+!.env.example   # the template is committed; the rule above must not shadow it
 
 # Connect IQ watch app — private signing key + build output, NEVER commit
 watch/developer_key

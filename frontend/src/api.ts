@@ -375,11 +375,67 @@ export interface ChatResponse {
   reply: string;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`/api${path}`);
+// ---- auth ----
+// A single shared password (GA_APP_PASSWORD on the server) is exchanged at
+// /api/login for a session token stored here. Every request carries it as a
+// bearer header; a 401 clears it and signals the app to show the login screen.
+
+const TOKEN_KEY = "waypoint_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+function setToken(t: string): void {
+  localStorage.setItem(TOKEN_KEY, t);
+}
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export class AuthError extends Error {}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { ...(extra ?? {}) };
+  const t = getToken();
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...init,
+    headers: authHeaders(init?.headers as Record<string, string> | undefined),
+  });
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new Event("waypoint-unauthorized"));
+    throw new AuthError(`${path} → 401`);
+  }
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return (await res.json()) as T;
 }
+
+async function get<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
+export const authApi = {
+  /** Does the server require a login? Drives whether we show the login gate. */
+  status: () => request<{ auth_required: boolean }>(`/auth/status`),
+  /** Exchange the password for a session token. Throws AuthError on wrong password. */
+  login: async (password: string): Promise<void> => {
+    const res = await fetch(`/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (res.status === 401) throw new AuthError("Incorrect password.");
+    if (!res.ok) throw new Error(`login → ${res.status}`);
+    const { token } = (await res.json()) as { token: string };
+    setToken(token);
+  },
+  logout: () => clearToken(),
+};
 
 export const api = {
   daily: (days = 120) => get<DailyRow[]>(`/metrics/daily?days=${days}`),
@@ -410,23 +466,17 @@ export const api = {
     if (weeklyMiles != null) q.set("weekly_miles", String(weeklyMiles));
     return get<PacePlan>(`/coach/pace?${q.toString()}`);
   },
-  sync: async (days = 2) => {
-    const res = await fetch(`/api/sync?days=${days}`, { method: "POST" });
-    if (!res.ok) throw new Error(`sync → ${res.status}`);
-    return (await res.json()) as { status: string; days: string };
-  },
+  sync: (days = 2) =>
+    request<{ status: string; days: string }>(`/sync?days=${days}`, { method: "POST" }),
 
   coachStatus: () => get<{ configured: boolean }>(`/coach/status`),
   conversations: () => get<{ conversations: ConversationSummary[] }>(`/coach/conversations`),
   conversation: (id: string) =>
     get<{ id: string; messages: ChatMessage[] }>(`/coach/conversations/${id}`),
-  chat: async (message: string, conversationId: string | null) => {
-    const res = await fetch(`/api/coach/chat`, {
+  chat: (message: string, conversationId: string | null) =>
+    request<ChatResponse>(`/coach/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, conversation_id: conversationId }),
-    });
-    if (!res.ok) throw new Error(`chat → ${res.status}`);
-    return (await res.json()) as ChatResponse;
-  },
+    }),
 };

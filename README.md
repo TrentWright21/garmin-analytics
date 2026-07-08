@@ -13,6 +13,10 @@ permanently on *your* machine.
 computer and is only ever sent to Garmin itself. Details in
 [SECURITY.md](SECURITY.md).
 
+**Want it running 24/7 and reachable from your phone?** See
+[DEPLOY.md](DEPLOY.md) — a private, password-protected setup over Tailscale,
+with an automated morning briefing pushed to your phone.
+
 ---
 
 ## Run your own copy in 10 minutes

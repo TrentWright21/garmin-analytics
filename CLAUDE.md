@@ -114,10 +114,12 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   errors, ran it live in the simulator on the Epix Pro 47mm, scrubbed Garmin
   tokens + signing key out of git, added `watch/SIMULATOR_RUNBOOK.md`. See the
   "Garmin watch companion app (M10)" section below.
-- **Trent's next goal: automated morning message (~60% done).** Scheduler + brief
-  content already exist; still need a notifier channel, a send job, and an
-  always-on deploy. Full breakdown in NEXT MILESTONES ("NEXT UP" item). He knows a
-  server deploy is required.
+- **Trent's next goal: automated morning message — CODE NOW COMPLETE (2026-07-07).**
+  Auth, rate limiting, Telegram notifier + send job, nightly backups, and the
+  `DEPLOY.md` runbook are all built, tested (142 pass), and verified — nothing
+  committed/pushed/deployed yet. What's left is Trent's own deploy actions (app
+  password, Docker, Tailscale, Telegram bot). See the "Production hardening +
+  automated morning message" section below.
 - **Pending (needs Trent's OK — ~5k Garmin calls):** `.\backfill.ps1 365`. Only
   30 days of history are loaded, which is why the sleep-need confidence is
   "moderate", long-term insights are sparse, and early ACWR is inflated. The
@@ -285,26 +287,86 @@ Pull-based: it fetches `GET /api/watch/briefing` and caches the last good copy.
 - **Real watch** (vs simulator) install = HTTPS tunnel (cloudflared) +
   `GA_WATCH_TOKEN` — see README's "Optional: put it on your real watch". Not done.
 
+## Production hardening + automated morning message (2026-07-07) — CODE COMPLETE, not yet deployed
+
+A full production-readiness pass. Everything below is **built, tested (142 tests
+pass), ruff + mypy --strict clean, and verified on a live throwaway server** — but
+nothing has been committed, pushed, or deployed (awaiting Trent's go-ahead). The
+design target is **Tailscale + Docker on Trent's own PC/Pi** (private WireGuard
+network, no public internet), a **shared-password login**, and a **Telegram**
+morning push. Full runbook in `DEPLOY.md`.
+
+- **Auth (the #1 blocker fixed — app previously had NO login).**
+  * `app/auth.py` — stdlib HMAC-signed stateless session tokens (no new dep):
+    30-day expiry, constant-time password + signature checks (`hmac.compare_digest`).
+    Signing key = sha256 of `"waypoint.session.v1:" + password`, so changing the
+    password revokes all existing tokens. `auth_enabled(settings)` = "is a password
+    set". `mint_token` / `verify_token` / `check_password` / `bearer_from_header`.
+  * `app/api/routes/auth.py` — `GET /api/auth/status` (`{auth_required: bool}`),
+    `POST /api/login` (rate-limited 10/min, returns a token or 401).
+  * Auth **middleware** in `main.py` (`_auth_dispatch`) guards every `/api/*`
+    except `/api/login`, `/api/auth/status`, and `/api/watch/*`. **OFF when no
+    password is set** (local dev + all pre-existing tests stay unauthenticated —
+    reads settings per-request so a token set after import still works), enforced
+    when `GA_APP_PASSWORD` is set. Middleware order (last added = outermost):
+    Auth innermost, then CORS, then TrustedHost — so CORS wraps 401s and OPTIONS
+    preflight is skipped.
+  * **Fail-closed in prod**: if `GA_ENVIRONMENT=prod` and no `GA_APP_PASSWORD`,
+    the lifespan **raises `RuntimeError`** — the app refuses to start wide open.
+  * `/docs`, `/redoc`, `/openapi.json` are **disabled in prod** (set to `None`).
+- **Rate limiting** — `app/ratelimit.py`: in-memory fixed-window `RateLimiter`
+  (thread-locked) exposed as a FastAPI dependency (429 + `Retry-After`). Applied
+  to login (10/min, brute-force), `POST /api/sync` (5/min, Garmin-lockout guard),
+  and `POST /api/coach/chat` (20/min, cost guard).
+- **Automated morning message — NOW CODE-COMPLETE** (was ~60%). `app/notify/`:
+  * `__init__.py` — `Notifier` Protocol (`send(title, text)`), `NotifyError`,
+    `is_configured(settings)` (both telegram token + chat id set), `build_notifier`.
+  * `telegram.py` — `TelegramNotifier` POSTs to the Telegram Bot API via httpx.
+  * `message.py` — `format_brief(brief) -> (title, text)` (pure), optional
+    `polish_message` (Claude rewrite via `ai/coach.py`, best-effort, falls back to
+    raw on any error), `send_morning_briefing(settings, cfg) -> bool`.
+  * **2nd scheduler job** in `main.py` at `notify.hour:minute` (default 06:35,
+    after the 06:30 sync), only registered when `config.notify.enabled`.
+  * `python -m app.cli notify-test` sends today's brief now (to test the channel).
+- **Backups** — `app/db/backup.py`: `backup_database(keep=14)` uses SQLite's
+  online-backup API (consistent snapshot) into `data/backups/`, rotates to newest
+  14, no-op for non-sqlite/missing db. **3rd scheduler job** nightly at 03:15.
+- **Config** (`config.py`): new `NotifyConfig` (enabled/hour/minute/ai_polish),
+  `AppConfig.cors_origins` / `.allowed_hosts` (empty in prod = same-origin only;
+  dev auto-allows the Vite origin), and secrets `app_password`,
+  `telegram_bot_token`, `telegram_chat_id` (all `SecretStr | None`). `config.yaml`
+  gained a documented `notify:` block (off by default).
+- **Watch feed hardened** — `/api/watch/briefing` is **fail-closed in prod**:
+  refuses (401) unless `GA_WATCH_TOKEN` is set (was serving data open).
+- **Frontend login** — `components/Login.tsx` (password gate), `api.ts` attaches
+  the bearer token to every request and on 401 clears it + fires a
+  `waypoint-unauthorized` event; `App.tsx` has a `loading|required|ok` auth state,
+  renders Login when required, and shows a Log out button. Auth-disabled backend
+  (no password) => status says not required => app behaves exactly as before.
+- **Tests** (19 new): `test_auth.py` (token roundtrip/expiry, open-when-no-password,
+  requires-token-when-set, health always open, prod-without-password raises,
+  watch fail-closed in prod), `test_notify.py` (format_brief, TelegramNotifier with
+  mocked httpx, send_morning_briefing), `test_infra.py` (RateLimiter window + key
+  isolation, backup create/rotate/noop), `test_static_security.py` (SPA
+  path-traversal regression). No real network/API calls in any test.
+- **Docs**: `DEPLOY.md` (new — Tailscale + Docker + Telegram + backups runbook),
+  plus `SECURITY.md`, `README.md`, `.env.example`, `config.yaml` updated for the
+  prod auth model. **Secrets model recap**: `GA_APP_PASSWORD` (login),
+  `GA_TELEGRAM_BOT_TOKEN` + `GA_TELEGRAM_CHAT_ID` (morning push),
+  `GA_WATCH_TOKEN` (real watch), `GA_ANTHROPIC_API_KEY` (AI Coach + optional
+  polish) — all optional locally, `GA_APP_PASSWORD` required in prod.
+- **STILL LEFT (Trent's action, not code)**: pick the app password, `docker
+  compose up -d --build`, install Tailscale on PC + phone + `tailscale serve --bg
+  3000`, create the Telegram bot and flip `notify.enabled: true`. Then optionally
+  commit/push. See `DEPLOY.md`.
+
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
-- **NEXT UP (Trent's ask) — Automated morning message + always-on deploy.**
-  Goal: a briefing pushed to Trent every morning without opening anything. Status
-  ~60%: the two hard pieces already exist — (a) the CONTENT (`build_briefing` ->
-  `/api/briefing` + `/api/watch/briefing`), and (b) a working SCHEDULER (APScheduler
-  in `main.py` lifespan already fires a daily job at `sync.hour:sync.minute` =
-  06:30 America/Chicago — currently only the Garmin sync). What's LEFT:
-  1. **Notifier** — pick a push channel and add `app/notify/`. Cheapest/simplest
-     for one user: **Telegram bot** or **ntfy.sh** (free, phone push) or **email
-     via SMTP**. Config a `GA_*` secret for the channel.
-  2. **Send job** — add a 2nd scheduled job (~06:35, after sync) that runs
-     `build_briefing` -> formats a short message (optionally Claude-polished via
-     `ai/coach.py`) -> sends via the notifier.
-  3. **Always-on deploy** — the scheduler only fires while the app runs; on
-     Trent's PC that's only during `.\start.ps1`. For a reliable 6:30 message the
-     app must run 24/7 → deploy the existing Docker image to a cheap VPS / Fly.io
-     / home Raspberry Pi. One-time Garmin MFA login on the server (mount `data/`
-     as a volume so tokens persist). This is the "deploy on a server" step Trent
-     already anticipated.
+- **NEXT UP — actually deploy** (all code above is done). Follow `DEPLOY.md`:
+  set `GA_APP_PASSWORD`, bring up Docker, put it on Tailscale, wire Telegram. The
+  scheduler only fires while the app runs, so an always-on host (Trent's PC left
+  on, or a Raspberry Pi) is what makes the 06:35 message reliable. One-time Garmin
+  MFA login on the host with `data/` mounted as a volume so tokens persist.
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
   recovery-day → best-run patterns, weekday patterns, plateau detection,
   anomaly detection (z-score on RHR/HRV), missed-training detection, mileage

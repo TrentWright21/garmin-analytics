@@ -9,6 +9,16 @@ sync:
   minute: 30
   backfill_days: 30      # history fetched on very first run
 
+# Automated morning message. Off by default. Turn on `enabled` AND set the
+# channel secrets in .env (GA_TELEGRAM_BOT_TOKEN / GA_TELEGRAM_CHAT_ID) to get a
+# daily push a few minutes after the sync. `ai_polish` rewrites the brief with
+# Claude (needs GA_ANTHROPIC_API_KEY; one API call per morning). See DEPLOY.md.
+notify:
+  enabled: false
+  hour: 6
+  minute: 35
+  ai_polish: false
+
 # Home location for the local weather feed (Open-Meteo, no API key needed).
 location:
   name: Hartselle, AL
