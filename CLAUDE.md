@@ -123,10 +123,21 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   (156 pass), and pushed. See "Morning Readiness Brief + live deployment" below.
   Remaining for Trent: set the Telegram bot secrets + `notify.enabled: true` on
   the server and it's fully hands-off.
-- **Pending (needs Trent's OK — ~5k Garmin calls):** `.\backfill.ps1 365`. Only
-  30 days of history are loaded, which is why the sleep-need confidence is
-  "moderate", long-term insights are sparse, and early ACWR is inflated. The
-  365-day backfill sharpens all of it. Run it, then `python -m app.cli renormalize`.
+- **2026-07-08/09 session: deep review + Phase 1a of the improvement plan SHIPPED
+  (commit d56c570, deployed to the droplet).** A full codebase/DB audit produced
+  **`IMPROVEMENT_PLAN.md`** (repo root) — THE working roadmap; read it before
+  planning any analytics/UI work. Shipped in Phase 1a: two-axis intensity ceiling
+  (load flags no longer double-counted), deterministic no-back-to-back-hard-days
+  rule, event + weekly summary in the AI payload, stale-overnight-data detection,
+  deterministic confidence + watch_tomorrow in the brief, monotony on a trailing
+  7-day window (was partial-calendar-week, fired spurious flags). 175 tests.
+  **NEXT UP: Phase 1b** — normalize already-collected raw fields (training effect,
+  HR zones, Garmin recovery time/training status, race predictions); exact JSON
+  keys are inventoried in IMPROVEMENT_PLAN.md.
+- **Backfill status (corrected 2026-07-08):** the DEV machine DB already has
+  **367 days** of daily data (290 d HRV, 119 activity days) — earlier "only 30
+  days" notes were stale. Only the **droplet's** separate DB is still ~30 days;
+  run the 365-day backfill THERE (command in IMPROVEMENT_PLAN.md, ~5k calls).
 - `weight_kg` is null — Trent has no weigh-ins in Garmin (not a bug); weight
   charts populate once he logs weight.
 
@@ -428,12 +439,12 @@ pipeline change — everything was already in `daily_metrics`, just not surfaced
 - **`gather_context` / `_merge_metrics`**: overnight + current metrics prefer
   today's row and fall back to yesterday's (so a not-yet-synced morning still shows
   the latest); day-totals (steps/calories) always come from yesterday's complete day.
-- **Garmin limitations (surfaced honestly, not faked)**: Garmin's **Training
-  Status** (productive/maintaining/peaking) and native **Recovery Time** (hours)
-  are NOT collected by any endpoint, so they're absent. We approximate with
-  CTL/ATL/TSB + ACWR + ramp (load productivity) and the computed recovery timer +
-  Garmin training_readiness. Adding either = new endpoint in `endpoints.py` +
-  mapper (+ a column for training status) — a deliberate future pipeline change.
+- **CORRECTION (2026-07-08 review)**: Garmin's **Training Status** and native
+  **Recovery Time** ARE already collected daily into the raw layer (inside the
+  `training_status` and `training_readiness` payloads) — they were just never
+  normalized, so the brief approximates with CTL/ATL/TSB + the computed recovery
+  timer. Mapping them is Phase 1b in `IMPROVEMENT_PLAN.md` (columns + mapper +
+  renormalize, no new endpoint needed).
 - Tests: `test_morning_brief.py` grew to cover the enriched layout (sleep stages,
   HRV status, VO2max, steps, weather), summary/insight in the AI path, graceful
   omission of missing metrics. 158 pass, ruff + mypy --strict clean. No new env
@@ -467,19 +478,19 @@ pipeline change — everything was already in `daily_metrics`, just not surfaced
   truncated bot token; a fresh `/revoke` token in the droplet's `.env` fixed it
   and `notify-test` delivered to Telegram. Nothing left to wire — it fires every
   morning with the app running 24/7 on DigitalOcean.
-- **NEXT UP (Trent's ask, 2026-07-08 "tomorrow") — more data + more analytics.**
-  1. **More data:** the **server's** DB only has **30 days** (we ran
-     `backfill --days 30` on the droplet; it's a SEPARATE DB from the dev machine).
-     Load a full year on the SERVER: `docker compose exec backend python -m
-     app.cli backfill --days 365` (~5k Garmin calls, be gentle — the droplet IP
-     already saw login 429s; the sync stops politely on 429 and is rerunnable),
-     then `docker compose exec backend python -m app.cli renormalize`. This
-     sharpens sleep-need confidence, long-term insights, ACWR, and the brief's
-     risk flags (early ACWR/monotony are inflated on thin history).
-  2. **More analytics in the brief:** expand what the Morning Readiness Brief and
-     dashboard surface (candidates below in M8 Insights v2 — sleep-vs-performance,
-     weekday patterns, plateau/anomaly detection, PR timeline). The brief's
-     `build_briefing()` + `morning_brief.py` are the hooks to enrich.
+- **NEXT UP — follow `IMPROVEMENT_PLAN.md` (repo root), the roadmap from the
+  2026-07-08 deep review.** Phase 1a shipped (d56c570). In order:
+  1. **Phase 1b — normalize already-collected raw fields** (training effect,
+     `hrTimeInZone_1..5`, Garmin recovery time / training status / load focus,
+     sleep extras, race predictions). Additive columns + mapper lines +
+     `renormalize`; exact JSON key paths are inventoried in the plan file.
+  2. **Ops — 365-day backfill on the DROPLET** (its DB is separate and still ~30
+     days; the dev DB already has 367 days): `docker compose exec backend python
+     -m app.cli backfill --days 365` (~5k calls, be gentle — the droplet IP saw
+     login 429s before; the sync stops politely on 429 and is rerunnable), then
+     `renormalize`.
+  3. **Phase 2 — analysis engine** (HRV ln/SWC method, one load pipeline,
+     sleep debt in readiness, zone-based 80/20, best-run-window, etc. — see plan).
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
   recovery-day → best-run patterns, weekday patterns, plateau detection,
   anomaly detection (z-score on RHR/HRV), missed-training detection, mileage
