@@ -140,7 +140,15 @@ def test_compose_morning_message_has_all_sections(
     settings.anthropic_api_key = None  # keep the workout on the offline fallback path
     title, text = compose_morning_message(settings, AppConfig())
     assert "Morning Readiness Brief" in title
-    for section in ("Current State:", "Goal:", "Today's Workout:", "Why:", "Watch out:"):
+    for section in (
+        "Current State:",
+        "Goal:",
+        "Today's Workout:",
+        "Why:",
+        "Watch out:",
+        "Watch tomorrow:",
+        "Confidence:",
+    ):
         assert section in text
 
     get_settings.cache_clear()

@@ -28,6 +28,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from app.analytics.readiness import GREEN_MIN, YELLOW_MIN
 from app.config import GoalConfig, Settings
 from app.logging import get_logger
 
@@ -53,6 +54,8 @@ class WorkoutRecommendation(BaseModel):
     watch_out: str
     summary: str = ""  # one-line readiness headline (AI or fallback)
     insight: str = ""  # short interpretation of the metrics (AI or fallback)
+    watch_tomorrow: str = ""  # the one signal to check tomorrow (AI or fallback)
+    confidence: str = ""  # high|moderate|low — always stamped deterministically
     ai_generated: bool = False
 
 
@@ -65,18 +68,68 @@ def _clamp(intensity: Intensity, ceiling: Intensity) -> Intensity:
     return intensity if _rank(intensity) <= _rank(ceiling) else ceiling
 
 
+# Risk-flag codes that derive from the training-load series. They all restate
+# one underlying fact ("you trained a lot lately"), so the ceiling counts the
+# worst of them ONCE instead of summing them — otherwise a single load spike
+# (which also drags the readiness band down via its load penalty) forced rest
+# days while HRV, resting HR, and sleep were all fine.
+_LOAD_FLAG_CODES = frozenset({"LOAD_SPIKE", "MONOTONY", "RAPID_RAMP", "DEEP_FATIGUE"})
+
+# A session at/above this Garmin training load counts as a "hard day" for the
+# back-to-back spacing rule and the weekly summary.
+_HARD_LOAD = 150.0
+
+
+def _physio_band(readiness: dict[str, Any]) -> str:
+    """The readiness band with the training-load penalty stripped back out.
+
+    ``daily_readiness`` subtracts a load penalty (ACWR / deep TSB) from the
+    physiological score before banding. The ceiling scores load on its own
+    axis, so here we recover the physiology-only band from score + penalty to
+    avoid counting the same load signal on both axes.
+    """
+    band = str(readiness.get("band", "unknown"))
+    score = readiness.get("score")
+    penalty = readiness.get("load_penalty") or 0.0
+    if score is None or not penalty:
+        return band
+    base = min(100.0, float(score) + float(penalty))
+    return "green" if base >= GREEN_MIN else "yellow" if base >= YELLOW_MIN else "red"
+
+
+def _hard_effort_on(recent: list[dict[str, Any]], day: date) -> bool:
+    """True if any session on ``day`` looks like a hard effort (load-based)."""
+    for session in recent:
+        if str(session.get("day")) != str(day):
+            continue
+        load = session.get("training_load")
+        if isinstance(load, (int, float)) and load >= _HARD_LOAD:
+            return True
+    return False
+
+
 def intensity_ceiling(
     readiness: dict[str, Any],
     risk: dict[str, Any],
     recovery: dict[str, Any],
+    recent: list[dict[str, Any]] | None = None,
+    today: date | None = None,
 ) -> tuple[Intensity, str]:
     """Hardest intensity allowed today, from recovery signals. Pure + auditable.
 
-    Counts "bad signals" (red readiness, each risk flag, an unrecovered last
-    session) and maps the total to a ceiling::
+    Two independent axes, so one cause is never counted twice:
 
-        0 -> hard (quality allowed)   2 -> recovery
-        1 -> easy                     3+ -> rest
+    * **Physiology** — how the body responded: the load-penalty-free readiness
+      band, physiological risk flags (HRV, resting HR, sleep), and an
+      unrecovered last session. These stack: 1 -> easy, 2 -> recovery, 3+ -> rest.
+    * **Load** — how much training piled up: the *worst single* load-family
+      flag (LOAD_SPIKE / MONOTONY / RAPID_RAMP / DEEP_FATIGUE), never summed.
+      With clean physiology: red -> easy, yellow -> moderate.
+
+    On top of both: a deterministic spacing rule — a hard effort yesterday caps
+    today at easy (no back-to-back hard days), enforced in code on the AI and
+    fallback paths alike. ``recent``/``today`` are optional so older callers
+    and tests that only score the signals keep working.
 
     Missing readiness (fresh install / no data) is treated conservatively as
     ``easy`` — enough to move, never a hard session on unknown recovery.
@@ -85,36 +138,50 @@ def intensity_ceiling(
     if band in (None, "unknown"):
         return "easy", "Not enough recent data to judge recovery — keep it easy."
 
-    bad = 0
+    physio = 0
+    load_axis = 0
     reasons: list[str] = []
-    if band == "red":
-        bad += 2
+
+    physio_band = _physio_band(readiness)
+    if physio_band == "red":
+        physio += 2
         reasons.append("readiness red")
-    elif band == "yellow":
-        bad += 1
+    elif physio_band == "yellow":
+        physio += 1
         reasons.append("readiness yellow")
 
     for flag in risk.get("flags", []):
         title = str(flag.get("title", "risk flag"))
-        if flag.get("severity") == "red":
-            bad += 2
-            reasons.append(title)
+        severity = 2 if flag.get("severity") == "red" else 1
+        if flag.get("code") in _LOAD_FLAG_CODES:
+            load_axis = max(load_axis, severity)
         else:
-            bad += 1
-            reasons.append(title)
+            physio += severity
+        reasons.append(title)
 
     if recovery.get("available") and recovery.get("recovered") is False:
-        bad += 1
+        physio += 1
         reasons.append("last session still settling")
 
-    if bad >= 3:
+    if physio >= 3:
         ceiling: Intensity = "rest"
-    elif bad == 2:
+    elif physio == 2:
         ceiling = "recovery"
-    elif bad == 1:
+    elif physio == 1 or load_axis >= 2:
         ceiling = "easy"
+    elif load_axis == 1:
+        ceiling = "moderate"
     else:
         ceiling = "hard"
+
+    if (
+        today is not None
+        and recent
+        and _rank(ceiling) > _rank("easy")
+        and _hard_effort_on(recent, today - timedelta(days=1))
+    ):
+        ceiling = "easy"
+        reasons.append("hard workout yesterday — no back-to-back hard days")
 
     reason = "; ".join(reasons) if reasons else "recovery signals look good"
     return ceiling, reason
@@ -126,27 +193,23 @@ _ENDURANCE = {"marathon", "half_marathon", "15k", "10k", "5k", "endurance", "cli
 
 
 def _yesterday_was_hard(recent: list[dict[str, Any]], today: date) -> bool:
-    """True if the most recent session was yesterday and looked like a hard effort."""
-    if not recent:
-        return False
-    last = recent[-1]
-    day = last.get("day")
-    if str(day) != str(today - timedelta(days=1)):
-        return False
-    load = last.get("training_load")
-    return isinstance(load, (int, float)) and load >= 150
+    """True if any session yesterday looked like a hard effort."""
+    return _hard_effort_on(recent, today - timedelta(days=1))
 
 
 _FALLBACK_SUMMARY: dict[Intensity, str] = {
     "rest": "Recovery is low today - prioritize rest.",
     "recovery": "You're a bit run down - keep it to active recovery.",
     "easy": "You're okay but not sharp - keep today easy.",
+    "moderate": "You're recovered, but training load is piling up - keep today controlled.",
     "hard": "You look recovered - good for quality if your goal supports it.",
 }
 _FALLBACK_INSIGHT: dict[Intensity, str] = {
     "rest": "Several signals are down, so absorbing recent training beats adding more load.",
     "recovery": "Signals are soft; gentle movement aids recovery without adding stress.",
     "easy": "Build aerobic volume today and save the intensity for a fresher day.",
+    "moderate": "Your body has responded well, but recent volume is already elevated; "
+    "a steady day adds fitness without stacking risk on top of the load.",
     "hard": "Recovery supports a harder session; keep it aligned with your goal and recent load.",
 }
 
@@ -202,6 +265,17 @@ def _fallback_core(
             instructions="Easy aerobic effort, 30-45 min, fully conversational. Nothing fast.",
             why="Recovery is okay but not sharp, so build aerobic volume without intensity.",
             watch_out="If your legs feel heavy or HR runs high, cut it to 25 min easy.",
+        )
+    if ceiling == "moderate":
+        # Physiology is fine but the training-load axis is flagged: volume ok,
+        # no intensity on top of an already-elevated load.
+        return WorkoutRecommendation(
+            workout_type="easy_run" if endurance else "cross_training",
+            intensity="moderate",
+            duration_min=40,
+            instructions="Steady 35-45 min at a controlled effort. No surges, no racing.",
+            why="You're recovered, but recent load is elevated - add volume, not intensity.",
+            watch_out="If it stops feeling comfortable, drop back to fully easy.",
         )
 
     # ceiling == "hard": quality allowed, but avoid stacking hard days.
@@ -260,6 +334,13 @@ Hard rules:
 - Adjust to condition: poor sleep / low body battery / poor recovery -> easier or
   recovery; high readiness with supportive recent load -> harder; high training
   load -> avoid piling on intensity; little recent training -> ease back in.
+- Use the goal event countdown when one is given: far out -> build volume; close
+  in -> sharpen and protect freshness. Reference it when it shapes the choice.
+- Respect the weekly context: if this week's volume already exceeds the 4-week
+  average, don't pile on; if a hard day happened in the last 2 days, keep today
+  easy regardless of how good the recovery numbers look.
+- If data_freshness says the overnight data is from yesterday or missing, say so
+  and be more conservative — do not treat stale numbers as this morning's.
 - Only use numbers you are given. If a key metric is missing, say so rather than
   guessing. Fitness guidance, not medical advice. Keep it concise and phone-readable.
 
@@ -274,6 +355,8 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
   "instructions": 1-2 sentences, specific and actionable
   "why": 1 sentence explaining the workout choice from the data
   "watch_out": 1 sentence — a safer fallback if the athlete feels off today
+  "watch_tomorrow": 1 short sentence — the single most useful signal to check
+                    tomorrow morning, given today's data and workout
 """
 
 
@@ -293,8 +376,22 @@ def _prompt_payload(
     recovery = brief.get("recovery") or {}
     weather = brief.get("weather") or {}
     heat = brief.get("heat") or {}
+    event = brief.get("event") or {}
     return {
         "goal": {"focus": goal.focus, "note": goal.note},
+        "goal_event": (
+            {
+                "name": event.get("name"),
+                "date": event.get("date"),
+                "days_until": event.get("days_until"),
+                "weeks_until": event.get("weeks_until"),
+                "kind": event.get("kind"),
+            }
+            if event.get("available")
+            else None
+        ),
+        "week": brief.get("week"),
+        "data_freshness": {"overnight_data_from": latest.get("overnight_source", "unknown")},
         "safety_ceiling": ceiling,
         "ceiling_reason": ceiling_reason,
         "readiness": {
@@ -378,30 +475,77 @@ def build_workout(
     as arguments so tests drive it with synthetic frames and a mocked client.
     """
     today = today or date.today()
+    readiness = brief.get("readiness") or {}
     ceiling, reason = intensity_ceiling(
-        brief.get("readiness") or {},
+        readiness,
         brief.get("risk") or {},
         brief.get("recovery") or {},
+        recent=recent,
+        today=today,
     )
-    fallback = fallback_workout(ceiling, goal, recent, today)
+    rec = fallback_workout(ceiling, goal, recent, today)
 
-    if settings.anthropic_api_key is None and client_factory is None:
-        return fallback
+    if settings.anthropic_api_key is not None or client_factory is not None:
+        try:
+            ai = _ai_workout(settings, goal, ceiling, reason, brief, recent, latest, client_factory)
+            # Defence in depth: clamp whatever the model returned under the ceiling.
+            ai.intensity = _clamp(ai.intensity, ceiling)
+            if ai.intensity in ("rest", "recovery") and ai.workout_type not in (
+                "rest",
+                "recovery",
+            ):
+                ai.workout_type = ai.intensity
+            ai.ai_generated = True
+            rec = ai
+        except Exception as exc:
+            # Any AI or parse failure (network, API, bad JSON) falls back to the
+            # safe rule-based workout so the morning message is never lost.
+            log.warning("morning_brief.ai_failed", err=type(exc).__name__)
 
-    try:
-        rec = _ai_workout(settings, goal, ceiling, reason, brief, recent, latest, client_factory)
-    except Exception as exc:
-        # Any AI or parse failure (network, API, bad JSON) falls back to the safe
-        # rule-based workout so the morning message is never lost.
-        log.warning("morning_brief.ai_failed", err=type(exc).__name__)
-        return fallback
-
-    # Defence in depth: clamp whatever the model returned back under the ceiling.
-    rec.intensity = _clamp(rec.intensity, ceiling)
-    if rec.intensity in ("rest", "recovery") and rec.workout_type not in ("rest", "recovery"):
-        rec.workout_type = rec.intensity
-    rec.ai_generated = True
+    # Confidence is stamped deterministically on BOTH paths (same philosophy as
+    # the intensity clamp: honesty about data quality is not delegated to the LLM).
+    rec.confidence = _data_confidence(readiness, latest)
+    if not rec.watch_tomorrow.strip():
+        rec.watch_tomorrow = _fallback_watch(readiness, rec.intensity)
     return rec
+
+
+def _data_confidence(readiness: dict[str, Any], latest: dict[str, Any]) -> str:
+    """Deterministic high/moderate/low grade of today's data quality. Pure.
+
+    Low when the overnight data is stale/missing or readiness could not be
+    scored; high only when readiness scored AND all three key vitals (HRV,
+    resting HR, sleep) are present from last night; moderate in between.
+    """
+    if latest.get("overnight_source") in ("yesterday", "missing"):
+        return "low"
+    if readiness.get("band") in (None, "unknown") or readiness.get("score") is None:
+        return "low"
+    key_vitals = ("hrv_last_night_avg", "resting_hr", "sleep_seconds")
+    present = sum(1 for k in key_vitals if latest.get(k) is not None)
+    if present == len(key_vitals):
+        return "high"
+    return "moderate" if present >= 1 else "low"
+
+
+_FALLBACK_WATCH: dict[Intensity, str] = {
+    "rest": "Check whether resting HR has come back down toward baseline.",
+    "recovery": "See if HRV rebounds overnight - that clears you for easy volume.",
+    "easy": "Watch tomorrow's readiness score; an easy day usually lifts it.",
+    "moderate": "Check how your legs respond to today before adding intensity.",
+    "hard": "Watch tonight's sleep - recovery decides whether to stack another quality day.",
+}
+
+
+def _fallback_watch(readiness: dict[str, Any], intensity: Intensity) -> str:
+    """Deterministic 'signal to watch tomorrow': the worst readiness driver when
+    one is clearly down, else a sensible default for today's intensity."""
+    drivers = readiness.get("drivers") or []
+    if drivers:
+        worst = drivers[0]
+        if worst.get("verdict") == "low" and worst.get("label"):
+            return f"Check {str(worst['label']).lower()} tomorrow morning - it's today's limiter."
+    return _FALLBACK_WATCH[intensity]
 
 
 def _ai_workout(
@@ -454,16 +598,85 @@ _ACT_COLS = (
     "name",
     "distance_m",
     "duration_s",
+    "elevation_gain_m",
     "avg_hr",
     "training_load",
 )
 
+_FT_PER_M = 3.28084
+
+
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _week_summary(activities: list[dict[str, Any]], today: date) -> dict[str, Any]:
+    """Weekly training context for the AI payload. Pure; totals in imperial.
+
+    ``activities`` is up to ~5 weeks of activity dicts (day, distance_m,
+    duration_s, elevation_gain_m, training_load). Returns this week's totals
+    (the 7 days ending today), the prior 4 weeks' per-week averages when that
+    history exists, and the spacing counters the coach needs: days since the
+    last hard day and the current run of consecutive active days.
+    """
+    rows = [(d, r) for r in activities if (d := _as_date(r.get("day"))) is not None]
+    week_start = today - timedelta(days=6)
+    prior_start = today - timedelta(days=34)
+
+    def _totals(chunk: list[tuple[date, dict[str, Any]]]) -> tuple[float, float, float, int]:
+        miles = sum(float(r.get("distance_m") or 0) for _, r in chunk) / _METERS_PER_MILE
+        hours = sum(float(r.get("duration_s") or 0) for _, r in chunk) / 3600.0
+        vert = sum(float(r.get("elevation_gain_m") or 0) for _, r in chunk) * _FT_PER_M
+        hard_days = {d for d, r in chunk if (r.get("training_load") or 0) >= _HARD_LOAD}
+        return miles, hours, vert, len(hard_days)
+
+    this_week = [(d, r) for d, r in rows if week_start <= d <= today]
+    prior = [(d, r) for d, r in rows if prior_start <= d < week_start]
+
+    miles, hours, vert, hard = _totals(this_week)
+    out: dict[str, Any] = {
+        "this_week": {
+            "miles": round(miles, 1),
+            "duration_h": round(hours, 1),
+            "vert_ft": round(vert),
+            "hard_days": hard,
+        }
+    }
+    if prior:
+        p_miles, p_hours, p_vert, p_hard = _totals(prior)
+        out["prior_4wk_weekly_avg"] = {
+            "miles": round(p_miles / 4, 1),
+            "duration_h": round(p_hours / 4, 1),
+            "vert_ft": round(p_vert / 4),
+            "hard_days": round(p_hard / 4, 1),
+        }
+
+    hard_days_all = {d for d, r in rows if (r.get("training_load") or 0) >= _HARD_LOAD}
+    out["days_since_last_hard"] = (today - max(hard_days_all)).days if hard_days_all else None
+
+    # Consecutive active days ending yesterday: 0 means yesterday was a rest day.
+    active = {d for d, _ in rows}
+    streak = 0
+    cursor = today - timedelta(days=1)
+    while cursor in active:
+        streak += 1
+        cursor -= timedelta(days=1)
+    out["consecutive_active_days"] = streak
+    return out
+
 
 def gather_context() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
-    """Load today's brief, the last 14 days of activities, and last night's metrics.
+    """Load today's brief, ~5 weeks of activities, and last night's metrics.
 
-    Returns ``(brief, recent_activities, latest_metrics)``. The only function here
-    that reads the database; everything else is pure so it can be unit-tested.
+    Returns ``(brief, recent_activities, latest_metrics)``; the brief also
+    gains a ``week`` block (this week's totals vs the prior 4-week average) for
+    the AI payload and, later, the message. The only function here that reads
+    the database; everything else is pure so it can be unit-tested.
     """
     from app.analytics import engine as ax
     from app.api.routes.briefing import build_briefing
@@ -471,14 +684,18 @@ def gather_context() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, An
     today = date.today()
     brief = build_briefing()
 
-    acts = ax.load_activities(*_range(14))
+    acts = ax.load_activities(*_range(35))
     recent: list[dict[str, Any]] = []
+    all_rows: list[dict[str, Any]] = []
     if not acts.is_empty():
         present = [c for c in _ACT_COLS if c in acts.columns]
-        for row in acts.sort("start_time_local").tail(8).select(present).to_dicts():
+        all_rows = acts.sort("start_time_local").select(present).to_dicts()
+        for row in all_rows[-8:]:
+            row = dict(row)
             dist = row.get("distance_m")
             row["distance_mi"] = round(dist / _METERS_PER_MILE, 2) if dist else None
             recent.append({k: v for k, v in row.items() if v is not None})
+    brief["week"] = _week_summary(all_rows, today)
 
     # Overnight metrics (sleep/HRV/RHR) come from today's row; day-total metrics
     # (steps/calories/intensity) from yesterday's complete day.
@@ -511,11 +728,25 @@ def _merge_metrics(today_row: dict[str, Any], yesterday_row: dict[str, Any]) -> 
     """One metrics dict. Overnight + current fields prefer today's row (last night)
     but fall back to yesterday's so a not-yet-synced morning still shows the most
     recent values; day-total fields (steps/calories) come from yesterday's complete
-    day, never today's partial one."""
+    day, never today's partial one.
+
+    The fallback is marked, never silent: ``overnight_source`` records where the
+    overnight numbers came from ("today" | "yesterday" | "missing") and
+    ``overnight_stale`` is True whenever they are NOT from last night — the
+    message and the AI payload both surface it.
+    """
     metrics: dict[str, Any] = {}
     for k in (*_OVERNIGHT_KEYS, *_CURRENT_KEYS):
         val = today_row.get(k)
         metrics[k] = val if val is not None else yesterday_row.get(k)
     for k in _DAY_TOTAL_KEYS:
         metrics[k] = yesterday_row.get(k)
+
+    if any(today_row.get(k) is not None for k in _OVERNIGHT_KEYS):
+        metrics["overnight_source"] = "today"
+    elif any(yesterday_row.get(k) is not None for k in _OVERNIGHT_KEYS):
+        metrics["overnight_source"] = "yesterday"
+    else:
+        metrics["overnight_source"] = "missing"
+    metrics["overnight_stale"] = metrics["overnight_source"] != "today"
     return metrics

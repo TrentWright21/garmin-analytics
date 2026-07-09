@@ -116,10 +116,15 @@ def acwr(load_by_day: pl.DataFrame) -> pl.DataFrame:
 
 
 def monotony(load_by_day: pl.DataFrame) -> pl.DataFrame:
-    """Foster's training monotony: weekly mean load / weekly std.
+    """Foster's training monotony over a trailing 7-day window, one row per day.
 
     High monotony (>2.0) with high load predicts overtraining/illness — it
     means every day looks the same, with no easy/hard variation.
+
+    Trailing window rather than calendar weeks: bucketing by calendar week
+    scored the current *partial* week, so two similar easy days on a Monday and
+    Tuesday produced a huge spurious monotony value early in every week. The
+    trailing window only reports once a full 7 days exist (nulls before that).
     """
     if load_by_day.is_empty():
         return load_by_day
@@ -129,8 +134,10 @@ def monotony(load_by_day: pl.DataFrame) -> pl.DataFrame:
         .with_columns(pl.col("load").fill_null(0))
     )
     return (
-        df.group_by_dynamic("day", every="1w")
-        .agg(mean=pl.col("load").mean(), std=pl.col("load").std())
+        df.with_columns(
+            mean=pl.col("load").rolling_mean(7, min_samples=7),
+            std=pl.col("load").rolling_std(7, min_samples=7),
+        )
         .with_columns(
             monotony=(pl.col("mean") / pl.when(pl.col("std") > 0).then(pl.col("std"))).round(2)
         )

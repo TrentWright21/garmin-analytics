@@ -174,7 +174,12 @@ def get_training_load(days: int = 90) -> str:
     if load.is_empty():
         return _js({"note": "no activities in range"})
     acwr_rows = [_compact(r) for r in ax.acwr(load).tail(14).to_dicts()]
-    mono_rows = [_compact(r) for r in ax.monotony(load).tail(4).to_dicts()]
+    # monotony is a trailing-7d daily series; sample one row per week (newest
+    # first, then restore order) to keep this the "last 4 weeks" view.
+    mono = ax.monotony(load)
+    if not mono.is_empty():
+        mono = mono.reverse().gather_every(7).head(4).reverse()
+    mono_rows = [_compact(r) for r in mono.to_dicts()]
     return _js(
         {
             "acwr_last_14_days": acwr_rows,

@@ -11,8 +11,14 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+import pytest
+
 from app.ai.morning_brief import (
     WorkoutRecommendation,
+    _data_confidence,
+    _merge_metrics,
+    _prompt_payload,
+    _week_summary,
     build_workout,
     fallback_workout,
     intensity_ceiling,
@@ -89,6 +95,59 @@ def test_ceiling_yellow_day_caps_at_easy() -> None:
     assert ceiling == "easy"
 
 
+def test_ceiling_load_flags_counted_once_not_summed() -> None:
+    # One load spike drags readiness to yellow via its load penalty AND fires
+    # two load-family flags. The old flat count made that 3 bad signals -> rest;
+    # the two-axis ceiling strips the penalty (physiology is actually green) and
+    # caps the load family at one contribution -> moderate.
+    readiness = {"band": "yellow", "score": 62, "load_penalty": 12.0, "drivers": []}
+    risk = {
+        "flags": [
+            {"code": "LOAD_SPIKE", "title": "Load ramping", "severity": "yellow"},
+            {"code": "RAPID_RAMP", "title": "Fitness is ramping fast", "severity": "yellow"},
+        ]
+    }
+    recovery = {"available": True, "recovered": True}
+    ceiling, _ = intensity_ceiling(readiness, risk, recovery)
+    assert ceiling == "moderate"
+
+
+def test_ceiling_red_load_flag_with_clean_physiology_caps_easy() -> None:
+    readiness = {"band": "green", "score": 80, "drivers": []}
+    risk = {"flags": [{"code": "LOAD_SPIKE", "title": "Load is spiking", "severity": "red"}]}
+    ceiling, _ = intensity_ceiling(readiness, risk, {"available": True, "recovered": True})
+    assert ceiling == "easy"
+
+
+def test_ceiling_physio_flags_still_stack_to_rest() -> None:
+    readiness = {"band": "green", "score": 80, "drivers": []}
+    risk = {
+        "flags": [
+            {"code": "HRV_SUPPRESSION", "title": "HRV is suppressed", "severity": "red"},
+            {"code": "RHR_ELEVATED", "title": "Resting HR is elevated", "severity": "yellow"},
+        ]
+    }
+    ceiling, _ = intensity_ceiling(readiness, risk, {"available": True, "recovered": True})
+    assert ceiling == "rest"  # physiology axis: 2 + 1 = 3
+
+
+def test_ceiling_blocks_back_to_back_hard_days() -> None:
+    recent = [{"day": str(TODAY - timedelta(days=1)), "training_load": 220}]
+    ceiling, reason = intensity_ceiling(
+        GOOD["readiness"], GOOD["risk"], GOOD["recovery"], recent=recent, today=TODAY
+    )
+    assert ceiling == "easy"
+    assert "back-to-back" in reason
+
+
+def test_ceiling_hard_two_days_ago_allows_quality() -> None:
+    recent = [{"day": str(TODAY - timedelta(days=2)), "training_load": 220}]
+    ceiling, _ = intensity_ceiling(
+        GOOD["readiness"], GOOD["risk"], GOOD["recovery"], recent=recent, today=TODAY
+    )
+    assert ceiling == "hard"
+
+
 # -- rule-based fallback ------------------------------------------------------
 
 
@@ -97,6 +156,9 @@ def test_fallback_respects_each_ceiling() -> None:
     assert fallback_workout("rest", goal, [], TODAY).intensity == "rest"
     assert fallback_workout("recovery", goal, [], TODAY).intensity == "recovery"
     assert fallback_workout("easy", goal, [], TODAY).intensity == "easy"
+    moderate = fallback_workout("moderate", goal, [], TODAY)
+    assert moderate.intensity == "moderate"
+    assert moderate.summary and moderate.insight  # every ceiling has fallback text
 
 
 def test_fallback_quality_day_picks_goal_workout() -> None:
@@ -279,3 +341,141 @@ def test_format_omits_missing_metrics_gracefully() -> None:
 def test_fallback_sets_summary_and_insight() -> None:
     rec = fallback_workout("rest", GoalConfig(focus="endurance"), [], TODAY)
     assert rec.summary and rec.insight  # non-empty deterministic text
+
+
+# -- weekly training summary ---------------------------------------------------
+
+
+def _act(days_ago: int, miles: float, load: float, vert_m: float = 0.0) -> dict[str, Any]:
+    return {
+        "day": TODAY - timedelta(days=days_ago),
+        "distance_m": miles * 1609.344,
+        "duration_s": miles * 600,  # ~10 min/mile
+        "elevation_gain_m": vert_m,
+        "training_load": load,
+    }
+
+
+def test_week_summary_totals_and_prior_baseline() -> None:
+    acts = [_act(i, 5.0, 100.0, vert_m=100.0) for i in range(7, 35)]  # 4 steady weeks
+    acts += [_act(2, 10.0, 220.0, vert_m=300.0), _act(1, 5.0, 80.0, vert_m=50.0)]
+    week = _week_summary(acts, TODAY)
+    assert week["this_week"]["miles"] == pytest.approx(15.0, abs=0.1)
+    assert week["this_week"]["hard_days"] == 1
+    assert week["this_week"]["vert_ft"] == round(350 * 3.28084)
+    assert week["prior_4wk_weekly_avg"]["miles"] == pytest.approx(35.0, abs=0.5)
+    assert week["days_since_last_hard"] == 2
+    assert week["consecutive_active_days"] == 2  # active yesterday + day before
+
+
+def test_week_summary_empty_history() -> None:
+    week = _week_summary([], TODAY)
+    assert week["this_week"]["miles"] == 0.0
+    assert week["days_since_last_hard"] is None
+    assert week["consecutive_active_days"] == 0
+    assert "prior_4wk_weekly_avg" not in week
+
+
+# -- staleness detection --------------------------------------------------------
+
+
+def test_merge_metrics_marks_fresh_overnight_data() -> None:
+    m = _merge_metrics({"sleep_seconds": 25000, "resting_hr": 50}, {"steps": 9000})
+    assert m["overnight_source"] == "today"
+    assert m["overnight_stale"] is False
+    assert m["sleep_seconds"] == 25000 and m["steps"] == 9000
+
+
+def test_merge_metrics_flags_stale_fallback() -> None:
+    m = _merge_metrics({}, {"sleep_seconds": 24000})
+    assert m["overnight_source"] == "yesterday"
+    assert m["overnight_stale"] is True
+    assert m["sleep_seconds"] == 24000  # still shown, but marked
+
+    empty = _merge_metrics({}, {})
+    assert empty["overnight_source"] == "missing"
+    assert empty["overnight_stale"] is True
+
+
+# -- confidence + watch tomorrow -------------------------------------------------
+
+
+FRESH_VITALS: dict[str, Any] = {
+    "overnight_source": "today",
+    "hrv_last_night_avg": 55,
+    "resting_hr": 50,
+    "sleep_seconds": 27000,
+}
+
+
+def test_data_confidence_levels() -> None:
+    scored = {"band": "green", "score": 80}
+    assert _data_confidence(scored, FRESH_VITALS) == "high"
+    assert _data_confidence(scored, {"overnight_source": "today", "resting_hr": 50}) == "moderate"
+    assert _data_confidence(scored, {"overnight_source": "yesterday"}) == "low"
+    assert _data_confidence({"band": "unknown", "score": None}, FRESH_VITALS) == "low"
+
+
+def test_build_workout_stamps_confidence_and_watch_tomorrow() -> None:
+    rec = build_workout(
+        _no_key_settings(), GoalConfig(focus="endurance"), GOOD, [], FRESH_VITALS, today=TODAY
+    )
+    assert rec.confidence == "high"
+    assert rec.watch_tomorrow  # deterministic fallback fills it
+
+
+def test_build_workout_ai_watch_tomorrow_kept_confidence_overridden() -> None:
+    body = (
+        '{"workout_type":"tempo","intensity":"moderate","duration_min":40,'
+        '"instructions":"Tempo.","why":"Recovered.","watch_out":"Ease off.",'
+        '"watch_tomorrow":"Check HRV after the tempo.","confidence":"high"}'
+    )
+    rec = build_workout(
+        Settings(),
+        GoalConfig(focus="endurance"),
+        GOOD,
+        [],
+        {},  # no vitals at all -> deterministic confidence is low, whatever the model says
+        today=TODAY,
+        client_factory=_factory(body),
+    )
+    assert rec.watch_tomorrow == "Check HRV after the tempo."
+    assert rec.confidence == "low"
+
+
+# -- prompt payload context -------------------------------------------------------
+
+
+def test_prompt_payload_includes_event_week_and_freshness() -> None:
+    brief = {**GOOD, "week": {"this_week": {"miles": 15.0, "hard_days": 1}}}
+    payload = _prompt_payload(
+        GoalConfig(focus="endurance"), "hard", "ok", brief, [], {"overnight_source": "today"}
+    )
+    assert payload["goal_event"]["name"] == "Whitney"
+    assert payload["goal_event"]["days_until"] == 24
+    assert payload["week"]["this_week"]["miles"] == 15.0
+    assert payload["data_freshness"]["overnight_data_from"] == "today"
+
+
+def test_prompt_payload_without_event_is_null() -> None:
+    payload = _prompt_payload(GoalConfig(), "easy", "ok", POOR, [], {})
+    assert payload["goal_event"] is None
+    assert payload["data_freshness"]["overnight_data_from"] == "unknown"
+
+
+# -- message rendering: staleness, watch tomorrow, confidence ---------------------
+
+
+def test_message_shows_stale_warning_watch_tomorrow_and_confidence() -> None:
+    workout = _workout(watch_tomorrow="Check resting HR.", confidence="low")
+    latest = {"overnight_source": "yesterday", "sleep_seconds": 25920, "resting_hr": 52}
+    _, text = format_morning_message(GOOD, GoalConfig(), workout, latest, [], today=TODAY)
+    assert "from yesterday" in text  # stale warning leads the current state
+    assert "Watch tomorrow:\nCheck resting HR." in text
+    assert "Confidence: low" in text
+
+
+def test_message_no_stale_warning_when_fresh() -> None:
+    latest = {"overnight_source": "today", "sleep_seconds": 25920}
+    _, text = format_morning_message(GOOD, GoalConfig(), _workout(), latest, [], today=TODAY)
+    assert "No sync yet" not in text and "missing" not in text

@@ -255,6 +255,16 @@ def _pretty_goal(goal: GoalConfig, brief: dict[str, Any]) -> str:
     return text
 
 
+def _staleness_line(latest: dict[str, Any]) -> str | None:
+    """A plain warning when the overnight numbers are not from last night."""
+    source = latest.get("overnight_source")
+    if source == "yesterday":
+        return "⚠ No sync yet this morning — sleep/HRV shown are from yesterday."
+    if source == "missing":
+        return "⚠ Overnight data is missing — this morning's sync may have failed."
+    return None
+
+
 def format_morning_message(
     brief: dict[str, Any],
     goal: GoalConfig,
@@ -271,7 +281,11 @@ def format_morning_message(
     last = _last_activity_line(recent)
     if last:
         state.append(last)
-    if not state:
+    if state:
+        stale = _staleness_line(latest)
+        if stale:
+            state.insert(0, stale)
+    else:
         state = ["No data yet — run a sync to populate your briefing."]
 
     dur = f" — {workout.duration_min} min" if workout.duration_min else ""
@@ -290,6 +304,12 @@ def format_morning_message(
     sections.append(f"Today's Workout:\n{wtype}{dur}\n{workout.instructions}")
     sections.append("Why:\n" + str(workout.why))
     sections.append("Watch out:\n" + str(workout.watch_out))
+    watch_next = str(getattr(workout, "watch_tomorrow", "") or "").strip()
+    if watch_next:
+        sections.append("Watch tomorrow:\n" + watch_next)
+    confidence = str(getattr(workout, "confidence", "") or "").strip()
+    if confidence:
+        sections.append(f"Confidence: {confidence}")
     return title, "\n\n".join(sections)
 
 

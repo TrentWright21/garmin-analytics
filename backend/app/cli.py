@@ -140,7 +140,13 @@ def cmd_notify_test(dry_run: bool = False) -> int:
         from app.notify.message import compose_morning_message
 
         title, text = compose_morning_message(settings, cfg)
-        print(f"{title}\n\n{text}")
+        out = f"{title}\n\n{text}"
+        try:
+            print(out)
+        except UnicodeEncodeError:
+            # cp1252 console: the brief contains emoji/em-dashes Telegram renders
+            # fine but a legacy Windows console cannot. Degrade the preview only.
+            print(out.encode("ascii", "replace").decode("ascii"))
         return 0
 
     from app.notify import is_configured
