@@ -10,7 +10,7 @@ channel simply no-ops.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from app.config import DEFAULT_DATA_DIR, AppConfig, GoalConfig, Settings
@@ -137,15 +137,28 @@ def _fmt_sleep(seconds: Any) -> str | None:
     return f"{total // 3600}h {total % 3600 // 60:02d}m"
 
 
-def _metric_line(latest: dict[str, Any]) -> str | None:
-    """Sleep / HRV / RHR / Body Battery / stress, skipping whatever is missing."""
-    parts: list[str] = []
+def _sleep_line(latest: dict[str, Any]) -> str | None:
     sleep = _fmt_sleep(latest.get("sleep_seconds"))
-    if sleep:
-        score = latest.get("sleep_score")
-        parts.append(f"Sleep {sleep}" + (f" (score {int(score)})" if score is not None else ""))
-    if latest.get("hrv_last_night_avg") is not None:
-        parts.append(f"HRV {int(latest['hrv_last_night_avg'])}ms")
+    if not sleep:
+        return None
+    parts = [f"Sleep {sleep}"]
+    if latest.get("sleep_score") is not None:
+        parts.append(f"score {int(latest['sleep_score'])}")
+    deep = _fmt_sleep(latest.get("deep_seconds"))
+    if deep:
+        parts.append(f"deep {deep}")
+    rem = _fmt_sleep(latest.get("rem_seconds"))
+    if rem:
+        parts.append(f"REM {rem}")
+    return " · ".join(parts)
+
+
+def _vitals_line(latest: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    hrv = latest.get("hrv_last_night_avg")
+    if hrv is not None:
+        status = latest.get("hrv_status")
+        parts.append(f"HRV {int(hrv)}ms" + (f" ({str(status).lower()})" if status else ""))
     if latest.get("resting_hr") is not None:
         parts.append(f"RHR {int(latest['resting_hr'])}bpm")
     if latest.get("body_battery_high") is not None:
@@ -155,26 +168,72 @@ def _metric_line(latest: dict[str, Any]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
-def _last_activity_line(recent: list[dict[str, Any]], today: date) -> str | None:
+def _activity_totals_line(latest: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    if latest.get("steps") is not None:
+        parts.append(f"{int(latest['steps']):,} steps")
+    if latest.get("active_calories") is not None:
+        parts.append(f"{int(latest['active_calories'])} active cal")
+    if latest.get("intensity_minutes") is not None:
+        parts.append(f"{int(latest['intensity_minutes'])} intensity min")
+    return "Yesterday: " + " · ".join(parts) if parts else None
+
+
+def _fitness_line(brief: dict[str, Any], latest: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    if latest.get("vo2max_running") is not None:
+        parts.append(f"VO2max {round(float(latest['vo2max_running']))}")
+    if latest.get("training_readiness") is not None:
+        parts.append(f"Garmin readiness {int(latest['training_readiness'])}")
+    fit = brief.get("fitness") or {}
+    if fit.get("available") and fit.get("form_tsb") is not None:
+        state = fit.get("form_state", "")
+        label = f"Form {float(fit['form_tsb']):+.0f}" + (f" ({state})" if state else "")
+        parts.append(label)
+    return " · ".join(parts) if parts else None
+
+
+def _weather_line(brief: dict[str, Any]) -> str | None:
+    weather = brief.get("weather") or {}
+    if not weather.get("available") or weather.get("temp_high_f") is None:
+        return None
+    parts = [f"High {float(weather['temp_high_f']):.0f}°F"]
+    if weather.get("apparent_high_f") is not None:
+        parts.append(f"feels {float(weather['apparent_high_f']):.0f}°F")
+    if weather.get("dew_point_f") is not None:
+        parts.append(f"dew {float(weather['dew_point_f']):.0f}°F")
+    line = "Weather: " + " · ".join(parts)
+    heat = brief.get("heat") or {}
+    if heat.get("available") and heat.get("severity") in ("high", "extreme") and heat.get("advice"):
+        line += f" · 🥵 {heat['advice']}"
+    return line
+
+
+def _last_activity_line(recent: list[dict[str, Any]]) -> str | None:
     if not recent:
         return None
     last = recent[-1]
     label = last.get("name") or last.get("activity_type") or "Activity"
-    when = "Yesterday" if str(last.get("day")) == str(today - timedelta(days=1)) else "Last"
     dist = last.get("distance_mi")
-    return f"{when}: {label}" + (f" {dist} mi" if dist else "")
+    return f"Last session: {label}" + (f" {dist} mi" if dist else "")
 
 
-def _current_state_lines(brief: dict[str, Any], latest: dict[str, Any], today: date) -> list[str]:
+def _current_state_lines(brief: dict[str, Any], latest: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     r = brief.get("readiness") or {}
     if r.get("score") is not None:
         band = str(r.get("band", "")).lower()
         emoji = _BAND_EMOJI.get(band, "")
         lines.append(f"{emoji} Readiness {r.get('score')}/100 ({band or 'n/a'})".strip())
-    metric = _metric_line(latest)
-    if metric:
-        lines.append(metric)
+    for line in (
+        _sleep_line(latest),
+        _vitals_line(latest),
+        _activity_totals_line(latest),
+        _fitness_line(brief, latest),
+        _weather_line(brief),
+    ):
+        if line:
+            lines.append(line)
     risk = brief.get("risk") or {}
     if risk.get("flag_count"):
         titles = ", ".join(f.get("title", "?") for f in risk.get("flags", [])[:3])
@@ -208,8 +267,8 @@ def format_morning_message(
     today = today or date.today()
     title = f"Morning Readiness Brief — {brief.get('date', today)}"
 
-    state = _current_state_lines(brief, latest, today)
-    last = _last_activity_line(recent, today)
+    state = _current_state_lines(brief, latest)
+    last = _last_activity_line(recent)
     if last:
         state.append(last)
     if not state:
@@ -219,14 +278,19 @@ def format_morning_message(
     wtype = str(workout.workout_type).replace("_", " ")
     wtype = wtype[:1].upper() + wtype[1:]
 
-    blocks = [
-        "Current State:\n" + "\n".join(state),
-        "Goal:\n" + _pretty_goal(goal, brief),
-        f"Today's Workout:\n{wtype}{dur}\n{workout.instructions}",
-        "Why:\n" + str(workout.why),
-        "Watch out:\n" + str(workout.watch_out),
-    ]
-    return title, "\n\n".join(blocks)
+    sections: list[str] = []
+    summary = str(getattr(workout, "summary", "") or "").strip()
+    if summary:
+        sections.append(summary)
+    sections.append("Current State:\n" + "\n".join(state))
+    sections.append("Goal:\n" + _pretty_goal(goal, brief))
+    insight = str(getattr(workout, "insight", "") or "").strip()
+    if insight:
+        sections.append("Insights:\n" + insight)
+    sections.append(f"Today's Workout:\n{wtype}{dur}\n{workout.instructions}")
+    sections.append("Why:\n" + str(workout.why))
+    sections.append("Watch out:\n" + str(workout.watch_out))
+    return title, "\n\n".join(sections)
 
 
 def compose_morning_message(settings: Settings, cfg: AppConfig) -> tuple[str, str]:

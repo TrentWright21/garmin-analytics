@@ -408,6 +408,37 @@ clean, verified end-to-end via a real `notify-test --dry-run`.
   a real `GA_ANTHROPIC_API_KEY`, so send/compose tests null `settings.anthropic_api_key`
   to stay offline (same gotcha as the coach tests — see AI Coach section).
 
+### Brief enrichment (2026-07-09) — more data points + AI insight
+
+Expanded the morning brief to reason over far more of the captured data (no
+pipeline change — everything was already in `daily_metrics`, just not surfaced):
+- **`_prompt_payload`** now feeds the model: full sleep (score + duration + deep/
+  REM/awake stages), HRV avg **+ hrv_status**, RHR, stress, Body Battery, VO2max,
+  Garmin training_readiness, respiration; yesterday's steps/active-calories/
+  intensity-minutes; the fitness/load block (CTL/ATL/TSB/ramp); and **today's
+  weather** (temp/feels-like/dew/humidity/wind + heat advisory).
+- **`_SYSTEM`** now asks the model for two extra JSON fields — `summary` (one-line
+  readiness headline) and `insight` (2-3 sentences interpreting fatigue/recovery/
+  sleep/readiness/training + weather) — plus explicit weather/adjustment rules.
+  `WorkoutRecommendation` gained `summary` + `insight` (defaulted; fallback fills
+  them deterministically from the ceiling via `_FALLBACK_SUMMARY/_INSIGHT`).
+- **`message.py`** renders grouped, phone-readable lines (sleep · vitals ·
+  yesterday-totals · fitness · **weather**) + a summary headline + an **Insights**
+  section. Missing metrics are omitted, never fabricated.
+- **`gather_context` / `_merge_metrics`**: overnight + current metrics prefer
+  today's row and fall back to yesterday's (so a not-yet-synced morning still shows
+  the latest); day-totals (steps/calories) always come from yesterday's complete day.
+- **Garmin limitations (surfaced honestly, not faked)**: Garmin's **Training
+  Status** (productive/maintaining/peaking) and native **Recovery Time** (hours)
+  are NOT collected by any endpoint, so they're absent. We approximate with
+  CTL/ATL/TSB + ACWR + ramp (load productivity) and the computed recovery timer +
+  Garmin training_readiness. Adding either = new endpoint in `endpoints.py` +
+  mapper (+ a column for training status) — a deliberate future pipeline change.
+- Tests: `test_morning_brief.py` grew to cover the enriched layout (sleep stages,
+  HRV status, VO2max, steps, weather), summary/insight in the AI path, graceful
+  omission of missing metrics. 158 pass, ruff + mypy --strict clean. No new env
+  vars (weather is keyless Open-Meteo; location already in `config.yaml`).
+
 ### Live deployment (the actual server)
 
 - **Host**: DigitalOcean droplet `waypoint` (Ubuntu 24.04, $6/mo 1GB + a 2GB
@@ -429,12 +460,26 @@ clean, verified end-to-end via a real `notify-test --dry-run`.
 
 ## NEXT MILESTONES (in order, one at a time, keep tests green)
 
-- **NEXT UP — enable the Telegram push on the live server** (deploy is DONE).
-  On the droplet: add `GA_TELEGRAM_BOT_TOKEN` + `GA_TELEGRAM_CHAT_ID` to `.env`,
-  set `notify.enabled: true` in `config.yaml`, `git pull` + `docker compose up -d
-  --build`, test with `docker compose exec backend python -m app.cli notify-test`.
-  Optional: add `GA_ANTHROPIC_API_KEY` on the server so the workout is AI-generated
-  (otherwise the safe rule-based fallback is used). Then it's fully hands-off.
+- **DONE — Morning Readiness Brief is LIVE and fully hands-off (2026-07-08).**
+  The whole pipeline works end to end on the server: daily 06:00 sync -> 06:30
+  brief -> Telegram push to Trent's phone/watch, with an AI-generated workout
+  gated by the deterministic safety ceiling. The earlier `401` was just a
+  truncated bot token; a fresh `/revoke` token in the droplet's `.env` fixed it
+  and `notify-test` delivered to Telegram. Nothing left to wire — it fires every
+  morning with the app running 24/7 on DigitalOcean.
+- **NEXT UP (Trent's ask, 2026-07-08 "tomorrow") — more data + more analytics.**
+  1. **More data:** the **server's** DB only has **30 days** (we ran
+     `backfill --days 30` on the droplet; it's a SEPARATE DB from the dev machine).
+     Load a full year on the SERVER: `docker compose exec backend python -m
+     app.cli backfill --days 365` (~5k Garmin calls, be gentle — the droplet IP
+     already saw login 429s; the sync stops politely on 429 and is rerunnable),
+     then `docker compose exec backend python -m app.cli renormalize`. This
+     sharpens sleep-need confidence, long-term insights, ACWR, and the brief's
+     risk flags (early ACWR/monotony are inflated on thin history).
+  2. **More analytics in the brief:** expand what the Morning Readiness Brief and
+     dashboard surface (candidates below in M8 Insights v2 — sleep-vs-performance,
+     weekday patterns, plateau/anomaly detection, PR timeline). The brief's
+     `build_briefing()` + `morning_brief.py` are the hooks to enrich.
 - **M8 — Insights v2.** Expand `generate_insights()`: sleep-vs-performance,
   recovery-day → best-run patterns, weekday patterns, plateau detection,
   anomaly detection (z-score on RHR/HRV), missed-training detection, mileage

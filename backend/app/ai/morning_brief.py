@@ -51,6 +51,8 @@ class WorkoutRecommendation(BaseModel):
     instructions: str
     why: str
     watch_out: str
+    summary: str = ""  # one-line readiness headline (AI or fallback)
+    insight: str = ""  # short interpretation of the metrics (AI or fallback)
     ai_generated: bool = False
 
 
@@ -135,13 +137,42 @@ def _yesterday_was_hard(recent: list[dict[str, Any]], today: date) -> bool:
     return isinstance(load, (int, float)) and load >= 150
 
 
+_FALLBACK_SUMMARY: dict[Intensity, str] = {
+    "rest": "Recovery is low today - prioritize rest.",
+    "recovery": "You're a bit run down - keep it to active recovery.",
+    "easy": "You're okay but not sharp - keep today easy.",
+    "hard": "You look recovered - good for quality if your goal supports it.",
+}
+_FALLBACK_INSIGHT: dict[Intensity, str] = {
+    "rest": "Several signals are down, so absorbing recent training beats adding more load.",
+    "recovery": "Signals are soft; gentle movement aids recovery without adding stress.",
+    "easy": "Build aerobic volume today and save the intensity for a fresher day.",
+    "hard": "Recovery supports a harder session; keep it aligned with your goal and recent load.",
+}
+
+
 def fallback_workout(
     ceiling: Intensity,
     goal: GoalConfig,
     recent: list[dict[str, Any]],
     today: date,
 ) -> WorkoutRecommendation:
-    """Deterministic, goal-aware workout within the ceiling. Never raises."""
+    """Deterministic, goal-aware workout within the ceiling, with a plain summary
+    + insight so the message reads the same shape as the AI path. Never raises.
+    """
+    rec = _fallback_core(ceiling, goal, recent, today)
+    rec.summary = _FALLBACK_SUMMARY[ceiling]
+    rec.insight = _FALLBACK_INSIGHT[ceiling]
+    return rec
+
+
+def _fallback_core(
+    ceiling: Intensity,
+    goal: GoalConfig,
+    recent: list[dict[str, Any]],
+    today: date,
+) -> WorkoutRecommendation:
+    """The workout body for each ceiling (summary/insight stamped by the caller)."""
     focus = goal.focus.lower().strip()
     endurance = focus in _ENDURANCE or "run" in focus
 
@@ -214,25 +245,34 @@ def fallback_workout(
 # -- AI recommendation (within the ceiling; falls back on any failure) ---------
 
 _SYSTEM = """\
-You are Coach, a direct, honest endurance/running coach writing one athlete's
-workout for today. You are given their recovery data, recent training, and goal.
+You are Coach, a direct, honest endurance/running coach writing this athlete's
+morning brief. You are given their recovery + training metrics, recent workouts,
+today's weather, and their goal.
 
 Hard rules:
 - A SAFETY CEILING is provided (rest < recovery < easy < moderate < hard). NEVER
-  prescribe an intensity above the ceiling, no matter the goal. If the ceiling is
+  prescribe an intensity above the ceiling, whatever the goal. If the ceiling is
   rest or recovery, prescribe rest or active recovery only.
-- Base the workout on the athlete's goal AND today's recovery. Reduce intensity
-  when recovery is poor; recommend rest/active recovery when multiple signals are bad.
-- Be concrete and brief. This is fitness guidance, not medical advice.
-- Use the athlete's own numbers; do not invent data.
+- Interpret the data; don't just restate numbers. Reason about fatigue, recovery,
+  sleep, readiness, and training direction, keeping the goal and recent load in mind.
+- Use today's weather: if it's hot/humid or bad, suggest going earlier, easier, or
+  moving the session indoors.
+- Adjust to condition: poor sleep / low body battery / poor recovery -> easier or
+  recovery; high readiness with supportive recent load -> harder; high training
+  load -> avoid piling on intensity; little recent training -> ease back in.
+- Only use numbers you are given. If a key metric is missing, say so rather than
+  guessing. Fitness guidance, not medical advice. Keep it concise and phone-readable.
 
 Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
+  "summary": one short sentence on overall readiness (e.g. "You look recovered").
+  "insight": 2-3 sentences interpreting the data (fatigue/recovery/sleep/readiness/
+             training + weather). Concrete, specific to today's numbers, no fluff.
   "workout_type": one of easy_run, long_run, intervals, tempo, recovery,
                   strength, cross_training, rest
   "intensity": one of rest, recovery, easy, moderate, hard  (<= the ceiling)
   "duration_min": integer minutes, or null for a rest day
   "instructions": 1-2 sentences, specific and actionable
-  "why": 1 sentence explaining the choice from the data
+  "why": 1 sentence explaining the workout choice from the data
   "watch_out": 1 sentence — a safer fallback if the athlete feels off today
 """
 
@@ -245,11 +285,14 @@ def _prompt_payload(
     recent: list[dict[str, Any]],
     latest: dict[str, Any],
 ) -> dict[str, Any]:
-    """Compact, JSON-serializable context for the model. Pure."""
+    """Compact, JSON-serializable context for the model. Pure. Missing values are
+    passed through as null so the model can see (and say) what is unavailable."""
     readiness = brief.get("readiness") or {}
     risk = brief.get("risk") or {}
     fitness = brief.get("fitness") or {}
     recovery = brief.get("recovery") or {}
+    weather = brief.get("weather") or {}
+    heat = brief.get("heat") or {}
     return {
         "goal": {"focus": goal.focus, "note": goal.note},
         "safety_ceiling": ceiling,
@@ -258,27 +301,58 @@ def _prompt_payload(
             "score": readiness.get("score"),
             "band": readiness.get("band"),
             "drivers": readiness.get("drivers", [])[:3],
+            "garmin_training_readiness": latest.get("training_readiness"),
         },
         "risk_flags": [
             {"title": f.get("title"), "severity": f.get("severity")} for f in risk.get("flags", [])
         ],
-        "fitness_form": {
-            "tsb": fitness.get("form_tsb"),
-            "state": fitness.get("form_state"),
+        "training_load": {
+            "fitness_ctl": fitness.get("fitness_ctl"),
+            "fatigue_atl_acute_load": fitness.get("fatigue_atl"),
+            "form_tsb": fitness.get("form_tsb"),
+            "form_state": fitness.get("form_state"),
+            "ramp_flag": fitness.get("ramp_flag"),
         },
         "recovery": {
             "recovered": recovery.get("recovered"),
             "pct_recovered": recovery.get("pct_recovered"),
         },
-        "last_night": {
+        "sleep": {
+            "hours": _sleep_hours(latest.get("sleep_seconds")),
+            "score": latest.get("sleep_score"),
+            "deep_hours": _sleep_hours(latest.get("deep_seconds")),
+            "rem_hours": _sleep_hours(latest.get("rem_seconds")),
+            "awake_hours": _sleep_hours(latest.get("awake_seconds")),
+        },
+        "vitals": {
             "resting_hr": latest.get("resting_hr"),
-            "hrv": latest.get("hrv_last_night_avg"),
-            "sleep_hours": _sleep_hours(latest.get("sleep_seconds")),
-            "sleep_score": latest.get("sleep_score"),
+            "hrv_avg": latest.get("hrv_last_night_avg"),
+            "hrv_status": latest.get("hrv_status"),
             "body_battery_high": latest.get("body_battery_high"),
             "avg_stress": latest.get("avg_stress"),
+            "vo2max": latest.get("vo2max_running"),
+            "respiration_avg": latest.get("respiration_avg"),
         },
+        "yesterday": {
+            "steps": latest.get("steps"),
+            "active_calories": latest.get("active_calories"),
+            "intensity_minutes": latest.get("intensity_minutes"),
+        },
+        "weather_today": _weather_payload(weather, heat) if weather.get("available") else None,
         "recent_activities": recent[-8:],
+    }
+
+
+def _weather_payload(weather: dict[str, Any], heat: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "high_f": weather.get("temp_high_f"),
+        "low_f": weather.get("temp_low_f"),
+        "feels_like_f": weather.get("apparent_high_f"),
+        "humidity_pct": weather.get("humidity_pct"),
+        "dew_point_f": weather.get("dew_point_f"),
+        "wind_mph": weather.get("wind_mph"),
+        "heat_severity": heat.get("severity") if heat.get("available") else None,
+        "heat_advice": heat.get("advice") if heat.get("available") else None,
     }
 
 
@@ -394,6 +468,7 @@ def gather_context() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, An
     from app.analytics import engine as ax
     from app.api.routes.briefing import build_briefing
 
+    today = date.today()
     brief = build_briefing()
 
     acts = ax.load_activities(*_range(14))
@@ -405,6 +480,42 @@ def gather_context() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, An
             row["distance_mi"] = round(dist / _METERS_PER_MILE, 2) if dist else None
             recent.append({k: v for k, v in row.items() if v is not None})
 
-    daily = ax.load_daily(*_range(3))
-    latest = daily.sort("day").tail(1).to_dicts()[0] if not daily.is_empty() else {}
-    return brief, recent, latest
+    # Overnight metrics (sleep/HRV/RHR) come from today's row; day-total metrics
+    # (steps/calories/intensity) from yesterday's complete day.
+    daily = ax.load_daily(*_range(4))
+    rows = {str(r["day"]): r for r in daily.to_dicts()} if not daily.is_empty() else {}
+    metrics = _merge_metrics(rows.get(str(today), {}), rows.get(str(today - timedelta(days=1)), {}))
+    return brief, recent, metrics
+
+
+_OVERNIGHT_KEYS = (
+    "resting_hr",
+    "hrv_last_night_avg",
+    "hrv_status",
+    "sleep_seconds",
+    "sleep_score",
+    "deep_seconds",
+    "light_seconds",
+    "rem_seconds",
+    "awake_seconds",
+    "body_battery_high",
+    "avg_stress",
+    "respiration_avg",
+    "spo2_avg",
+)
+_DAY_TOTAL_KEYS = ("steps", "active_calories", "total_calories", "intensity_minutes", "floors_up")
+_CURRENT_KEYS = ("training_readiness", "vo2max_running", "weight_kg")
+
+
+def _merge_metrics(today_row: dict[str, Any], yesterday_row: dict[str, Any]) -> dict[str, Any]:
+    """One metrics dict. Overnight + current fields prefer today's row (last night)
+    but fall back to yesterday's so a not-yet-synced morning still shows the most
+    recent values; day-total fields (steps/calories) come from yesterday's complete
+    day, never today's partial one."""
+    metrics: dict[str, Any] = {}
+    for k in (*_OVERNIGHT_KEYS, *_CURRENT_KEYS):
+        val = today_row.get(k)
+        metrics[k] = val if val is not None else yesterday_row.get(k)
+    for k in _DAY_TOTAL_KEYS:
+        metrics[k] = yesterday_row.get(k)
+    return metrics

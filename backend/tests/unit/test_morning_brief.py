@@ -158,7 +158,9 @@ def test_build_workout_without_key_uses_fallback() -> None:
 
 def test_build_workout_ai_path_returns_model() -> None:
     body = (
-        '{"workout_type":"tempo","intensity":"moderate","duration_min":40,'
+        '{"summary":"You look recovered.",'
+        '"insight":"Sleep and HRV are solid and load is manageable, so tempo fits today.",'
+        '"workout_type":"tempo","intensity":"moderate","duration_min":40,'
         '"instructions":"15 min warm-up, 20 min tempo, cool down.",'
         '"why":"Recovered and endurance-focused.","watch_out":"Ease off if HR spikes."}'
     )
@@ -174,6 +176,8 @@ def test_build_workout_ai_path_returns_model() -> None:
     assert rec.ai_generated is True
     assert rec.workout_type == "tempo"
     assert rec.intensity == "moderate"
+    assert rec.summary == "You look recovered."
+    assert rec.insight.startswith("Sleep and HRV")
 
 
 def test_build_workout_clamps_ai_over_ceiling() -> None:
@@ -211,28 +215,67 @@ def test_build_workout_bad_response_falls_back() -> None:
 # -- message formatting -------------------------------------------------------
 
 
+def _workout(**over: Any) -> WorkoutRecommendation:
+    base: dict[str, Any] = {
+        "workout_type": "easy_run",
+        "intensity": "easy",
+        "duration_min": 40,
+        "instructions": "Easy 40 min, conversational.",
+        "why": "Recovery is solid.",
+        "watch_out": "Cut short if legs feel heavy.",
+    }
+    base.update(over)
+    return WorkoutRecommendation(**base)
+
+
 def test_format_morning_message_layout() -> None:
-    workout = WorkoutRecommendation(
-        workout_type="easy_run",
-        intensity="easy",
-        duration_min=40,
-        instructions="Easy 40 min, conversational.",
-        why="Recovery is solid.",
-        watch_out="Cut short if legs feel heavy.",
+    workout = _workout(
+        summary="You look recovered.",
+        insight="Sleep and HRV are solid; a light aerobic day keeps you on track.",
     )
     latest = {
         "sleep_seconds": 25920,  # 7h 12m
         "sleep_score": 78,
+        "deep_seconds": 3900,
         "resting_hr": 52,
         "hrv_last_night_avg": 66,
+        "hrv_status": "BALANCED",
+        "body_battery_high": 84,
+        "vo2max_running": 48.2,
+        "training_readiness": 72,
+        "steps": 8240,
+        "active_calories": 540,
+    }
+    brief = {
+        **GOOD,
+        "weather": {"available": True, "temp_high_f": 92.0, "dew_point_f": 74.0},
+        "heat": {"available": True, "severity": "high", "advice": "run early + hydrate"},
     }
     recent = [{"day": str(TODAY - timedelta(days=1)), "name": "Easy Run", "distance_mi": 3.2}]
     title, text = format_morning_message(
-        GOOD, GoalConfig(focus="half_marathon"), workout, latest, recent, today=TODAY
+        brief, GoalConfig(focus="half_marathon"), workout, latest, recent, today=TODAY
     )
     assert "Morning Readiness Brief" in title
+    assert "You look recovered." in text  # AI summary
+    assert "Insights:" in text  # AI insight section
     assert "Readiness 84/100 (green)" in text
-    assert "Sleep 7h 12m" in text and "RHR 52bpm" in text
-    assert "Yesterday: Easy Run 3.2 mi" in text
+    assert "Sleep 7h 12m" in text and "deep" in text
+    assert "HRV 66ms (balanced)" in text and "RHR 52bpm" in text
+    assert "VO2max 48" in text and "Garmin readiness 72" in text
+    assert "8,240 steps" in text and "540 active cal" in text
+    assert "Weather:" in text and "92°F" in text and "run early" in text
+    assert "Last session: Easy Run 3.2 mi" in text
     assert "Half marathon" in text
     assert "Easy 40 min" in text and "Recovery is solid." in text
+
+
+def test_format_omits_missing_metrics_gracefully() -> None:
+    # Empty metrics + no weather: no crash, and nothing fabricated.
+    title, text = format_morning_message(MISSING, GoalConfig(), _workout(), {}, [], today=TODAY)
+    assert "Morning Readiness Brief" in title
+    assert "VO2max" not in text and "Sleep" not in text and "Weather:" not in text
+
+
+def test_fallback_sets_summary_and_insight() -> None:
+    rec = fallback_workout("rest", GoalConfig(focus="endurance"), [], TODAY)
+    assert rec.summary and rec.insight  # non-empty deterministic text
