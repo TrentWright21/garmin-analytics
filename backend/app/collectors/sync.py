@@ -29,7 +29,7 @@ from app.config import get_app_config
 from app.db.engine import latest_raw, latest_raw_any, session_scope, store_raw
 from app.db.models.core import RawApiData
 from app.logging import get_logger
-from app.normalize.mappers import build_activity, build_daily_metrics
+from app.normalize.mappers import build_activity, build_daily_metrics, build_race_prediction
 from app.normalize.weather import build_daily_weather, parse_weather_daily
 
 log = get_logger(__name__)
@@ -207,6 +207,21 @@ def normalize_range(start: date, end: date) -> None:
             act = build_activity(json.loads(r.payload_json))
             if act:
                 s.merge(act)
+
+        # race predictions: one row per snapshot day (payload's calendarDate wins)
+        pred_rows = s.execute(
+            select(RawApiData).where(
+                RawApiData.endpoint == "race_predictions",
+                RawApiData.metric_date >= start,
+                RawApiData.metric_date <= end,
+            )
+        ).scalars()
+        for r in pred_rows:
+            payload = json.loads(r.payload_json)
+            if isinstance(payload, dict):
+                pred = build_race_prediction(payload, r.metric_date)
+                if pred:
+                    s.merge(pred)
 
         normalize_weather(s)
 

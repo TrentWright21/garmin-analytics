@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
@@ -37,8 +37,28 @@ def get_engine() -> Engine:
             Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
         _engine = create_engine(url)
         Base.metadata.create_all(_engine)  # Alembic arrives with the Postgres move
+        _add_missing_columns(_engine)
         _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Dumb, idempotent forward migration: ADD COLUMN for model columns the DB
+    lacks. ``create_all`` only creates missing *tables*, so additive schema
+    changes (e.g. Phase 1b's new DailyMetrics/Activity columns) need this until
+    Alembic arrives with the Postgres move. All model columns added this way
+    must be nullable; anything fancier (renames, drops, types) waits for Alembic.
+    """
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                col_type = column.type.compile(engine.dialect)
+                ddl = f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {col_type}'
+                conn.execute(text(ddl))
 
 
 @contextmanager

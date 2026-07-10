@@ -313,7 +313,15 @@ def test_format_morning_message_layout() -> None:
         "weather": {"available": True, "temp_high_f": 92.0, "dew_point_f": 74.0},
         "heat": {"available": True, "severity": "high", "advice": "run early + hydrate"},
     }
-    recent = [{"day": str(TODAY - timedelta(days=1)), "name": "Easy Run", "distance_mi": 3.2}]
+    recent = [
+        {
+            "day": str(TODAY - timedelta(days=1)),
+            "name": "Easy Run",
+            "distance_mi": 3.2,
+            "duration_s": 1860.0,  # ~9:41/mi
+            "aerobic_te": 2.8,
+        }
+    ]
     title, text = format_morning_message(
         brief, GoalConfig(focus="half_marathon"), workout, latest, recent, today=TODAY
     )
@@ -326,7 +334,7 @@ def test_format_morning_message_layout() -> None:
     assert "VO2max 48" in text and "Garmin readiness 72" in text
     assert "8,240 steps" in text and "540 active cal" in text
     assert "Weather:" in text and "92°F" in text and "run early" in text
-    assert "Last session: Easy Run 3.2 mi" in text
+    assert "Last session: Easy Run · 3.2 mi · 9:41/mi · TE 2.8 aerobic" in text
     assert "Half marathon" in text
     assert "Easy 40 min" in text and "Recovery is solid." in text
 
@@ -479,3 +487,79 @@ def test_message_no_stale_warning_when_fresh() -> None:
     latest = {"overnight_source": "today", "sleep_seconds": 25920}
     _, text = format_morning_message(GOOD, GoalConfig(), _workout(), latest, [], today=TODAY)
     assert "No sync yet" not in text and "missing" not in text
+
+
+# -- Phase 1b: TE-based hard-day detection + Garmin's own view --------------------
+
+
+def test_hard_day_detected_from_te_label_even_at_low_load() -> None:
+    recent = [{"day": str(TODAY - timedelta(days=1)), "training_load": 90, "te_label": "TEMPO"}]
+    ceiling, reason = intensity_ceiling(
+        GOOD["readiness"], GOOD["risk"], GOOD["recovery"], recent=recent, today=TODAY
+    )
+    assert ceiling == "easy"
+    assert "back-to-back" in reason
+
+
+def test_hard_day_detected_from_anaerobic_te() -> None:
+    recent = [{"day": str(TODAY - timedelta(days=1)), "anaerobic_te": 3.1, "training_load": 90}]
+    ceiling, _ = intensity_ceiling(
+        GOOD["readiness"], GOOD["risk"], GOOD["recovery"], recent=recent, today=TODAY
+    )
+    assert ceiling == "easy"
+
+
+def test_long_easy_session_with_te_is_not_a_hard_day() -> None:
+    # High load but TE says aerobic-base easy: TE wins over the load proxy, so a
+    # long easy day yesterday no longer blocks quality today.
+    recent = [
+        {
+            "day": str(TODAY - timedelta(days=1)),
+            "training_load": 220,
+            "aerobic_te": 3.0,
+            "anaerobic_te": 0.0,
+            "te_label": "AEROBIC_BASE",
+        }
+    ]
+    ceiling, _ = intensity_ceiling(
+        GOOD["readiness"], GOOD["risk"], GOOD["recovery"], recent=recent, today=TODAY
+    )
+    assert ceiling == "hard"
+
+
+def test_prompt_payload_carries_garmin_view_and_sleep_extras() -> None:
+    latest = {
+        "overnight_source": "today",
+        "training_status": "UNPRODUCTIVE_5",
+        "recovery_time_min": 767,
+        "acute_load_garmin": 220,
+        "hrv_weekly_avg": 76,
+        "body_battery_change": 67,
+        "restless_moments": 40,
+        "skin_temp_dev_c": -0.3,
+    }
+    payload = _prompt_payload(GoalConfig(), "easy", "ok", GOOD, [], latest)
+    view = payload["garmin_view"]
+    assert view["training_status"] == "UNPRODUCTIVE_5"
+    assert view["recovery_time_h"] == 12.8
+    assert view["acute_load"] == 220
+    assert view["hrv_weekly_avg"] == 76
+    assert payload["sleep"]["body_battery_recharge"] == 67
+    assert payload["sleep"]["restless_moments"] == 40
+    assert payload["sleep"]["skin_temp_deviation_c"] == -0.3
+
+
+def test_message_mentions_training_status_only_when_not_productive() -> None:
+    bad = {"training_status": "UNPRODUCTIVE_5", "vo2max_running": 48.0}
+    _, text = format_morning_message(GOOD, GoalConfig(), _workout(), bad, [], today=TODAY)
+    assert "Garmin status: Unproductive" in text
+
+    good = {"training_status": "PRODUCTIVE_1", "vo2max_running": 48.0}
+    _, text = format_morning_message(GOOD, GoalConfig(), _workout(), good, [], today=TODAY)
+    assert "Garmin status" not in text
+
+
+def test_message_shows_overnight_body_battery_recharge() -> None:
+    latest = {"body_battery_high": 84, "body_battery_change": 67}
+    _, text = format_morning_message(GOOD, GoalConfig(), _workout(), latest, [], today=TODAY)
+    assert "Body Battery 84 (+67 overnight)" in text

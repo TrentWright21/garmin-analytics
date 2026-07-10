@@ -11,11 +11,13 @@ from typing import Any
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text as sa_text
 
 import app.db.engine as db
 from app.analytics import engine as ax
 from app.collectors.sync import SyncEngine
-from app.db.models.core import Activity, DailyMetrics, RawApiData
+from app.db.models.core import Activity, DailyMetrics, RacePrediction, RawApiData
+from app.normalize.mappers import build_daily_metrics, build_race_prediction
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +62,24 @@ def sleep_payload(day: date) -> dict[str, Any]:
             "remSleepSeconds": 7200,
             "awakeSleepSeconds": 900,
             "sleepScores": {"overall": {"value": 82}},
+        },
+        # overnight extras live at the top level, outside the DTO
+        "bodyBatteryChange": 67,
+        "restlessMomentsCount": 40,
+        "avgSkinTempDeviationC": -0.3,
+    }
+
+
+def training_status_payload() -> dict[str, Any]:
+    return {
+        "mostRecentTrainingStatus": {
+            "latestTrainingStatusData": {
+                "3500092692": {
+                    "trainingStatus": 2,
+                    "trainingStatusFeedbackPhrase": "UNPRODUCTIVE_5",
+                    "fitnessTrend": 1,
+                }
+            }
         }
     }
 
@@ -81,12 +101,22 @@ class FakeCollector:
         if endpoint == "hrv":
             return {"hrvSummary": {"lastNightAvg": 62, "status": "BALANCED"}}
         if endpoint == "training_readiness":
-            return [{"score": 71}]
+            return [{"score": 71, "recoveryTime": 767, "acuteLoad": 220, "hrvWeeklyAverage": 76}]
+        if endpoint == "training_status":
+            return training_status_payload()
         if endpoint == "max_metrics":
             return [{"generic": {"vo2MaxPreciseValue": 51.3}}]
         return {}  # everything else: empty, must be skipped gracefully
 
     def fetch_snapshot(self, endpoint: str) -> Any:
+        if endpoint == "race_predictions":
+            return {
+                "calendarDate": str(date.today()),
+                "time5K": 1485,
+                "time10K": 3223,
+                "timeHalfMarathon": 7453,
+                "timeMarathon": 16878,
+            }
         return {"snapshot": endpoint}
 
     def activities_by_date(self, start: date, end: date) -> list[dict[str, Any]]:
@@ -105,6 +135,15 @@ class FakeCollector:
                 "averageRunningCadenceInStepsPerMinute": 172.0,
                 "averageTemperature": 24.0,
                 "activityTrainingLoad": 95.0,
+                "aerobicTrainingEffect": 2.8,
+                "anaerobicTrainingEffect": 0.4,
+                "trainingEffectLabel": "AEROBIC_BASE",
+                "averageSpeed": 2.96,
+                "hrTimeInZone_1": 155.0,
+                "hrTimeInZone_2": 409.0,
+                "hrTimeInZone_3": 1201.7,
+                "hrTimeInZone_4": 0.0,
+                "hrTimeInZone_5": 0.0,
             }
         ]
 
@@ -153,8 +192,35 @@ class TestSyncPipeline:
             assert dm.hrv_last_night_avg == 62
             assert dm.training_readiness == 71
             assert dm.vo2max_running == 51.3
+            # Phase 1b: Garmin's own verdicts + overnight extras
+            assert dm.recovery_time_min == 767
+            assert dm.acute_load_garmin == 220
+            assert dm.hrv_weekly_avg == 76
+            assert dm.training_status == "UNPRODUCTIVE_5"
+            assert dm.body_battery_change == 67
+            assert dm.restless_moments == 40
+            assert dm.skin_temp_dev_c == -0.3
             act = s.get(Activity, 111)
             assert act is not None and act.activity_type == "running"
+            # Phase 1b: Training Effect + speed + HR-zone seconds
+            assert act.aerobic_te == 2.8
+            assert act.anaerobic_te == 0.4
+            assert act.te_label == "AEROBIC_BASE"
+            assert act.avg_speed_mps == 2.96
+            assert act.zone_3_s == 1201.7
+
+    def test_race_prediction_snapshot_normalizes(self) -> None:
+        # The snapshot is stored at today's date, so a range covering today
+        # (as the daily sync's always does) materializes the row.
+        today = date.today()
+        SyncEngine(FakeCollector(), pause_s=0).sync_range(today, today)
+        with db.session_scope() as s:
+            rp = s.get(RacePrediction, today)
+            assert rp is not None
+            assert rp.time_5k_s == 1485
+            assert rp.time_10k_s == 3223
+            assert rp.time_half_s == 7453
+            assert rp.time_marathon_s == 16878
 
     def test_resync_with_revision_updates_normalized_keeps_raw(self) -> None:
         collector = FakeCollector()
@@ -168,6 +234,44 @@ class TestSyncPipeline:
             assert dm is not None and dm.steps == 9500  # normalized reflects revision
             raws = s.query(RawApiData).filter_by(endpoint="daily_summary").count()
             assert raws == 2  # ...but the original is still there
+
+
+class TestPhase1bMappers:
+    def test_race_prediction_prefers_payload_calendar_date(self) -> None:
+        rp = build_race_prediction({"calendarDate": "2026-07-07", "time5K": 1485}, DAY)
+        assert rp is not None
+        assert rp.day == date(2026, 7, 7)
+        assert rp.time_5k_s == 1485
+
+    def test_race_prediction_falls_back_to_metric_date(self) -> None:
+        rp = build_race_prediction({"time10K": 3223}, DAY)
+        assert rp is not None
+        assert rp.day == DAY
+        assert rp.time_10k_s == 3223
+
+    def test_race_prediction_without_times_or_day_is_skipped(self) -> None:
+        assert build_race_prediction({"userId": 1}, DAY) is None  # no times
+        assert build_race_prediction({"time5K": 1485}, None) is None  # no day at all
+
+    def test_training_status_missing_sections_tolerated(self) -> None:
+        m = build_daily_metrics(DAY, {"training_status": {"mostRecentTrainingStatus": {}}})
+        assert m.training_status is None
+        m = build_daily_metrics(DAY, {"training_status": {"unexpected": "shape"}})
+        assert m.training_status is None
+
+
+class TestColumnMigration:
+    def test_add_missing_columns_restores_dropped_column(self) -> None:
+        engine = db.get_engine()
+        with engine.begin() as conn:
+            conn.execute(sa_text("ALTER TABLE daily_metrics DROP COLUMN training_status"))
+        db._add_missing_columns(engine)  # simulates startup on a pre-1b database
+        with db.session_scope() as s:
+            s.merge(DailyMetrics(day=DAY, training_status="PRODUCTIVE_1"))
+        with db.session_scope() as s:
+            row = s.get(DailyMetrics, DAY)
+            assert row is not None and row.training_status == "PRODUCTIVE_1"
+        db._add_missing_columns(engine)  # idempotent: re-run is a no-op
 
 
 def synthetic_daily(n: int = 90) -> pl.DataFrame:

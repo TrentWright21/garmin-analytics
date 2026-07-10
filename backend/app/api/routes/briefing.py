@@ -88,6 +88,13 @@ def build_briefing() -> dict[str, Any]:
     fit = fitness.fitness_summary(load)
     tsb = _f(fit.get("form_tsb")) if fit.get("available") else None
 
+    # Garmin's native recovery timer, but only today's fetch — the value means
+    # "minutes remaining as of this morning", so yesterday's would mislead.
+    last_daily = daily.tail(1).to_dicts()[0] if not daily.is_empty() else {}
+    garmin_recovery = (
+        _f(last_daily.get("recovery_time_min")) if last_daily.get("day") == today else None
+    )
+
     weather_frame = ax.load_weather(today, today)
     weather_row = weather_frame.tail(1).to_dicts()[0] if not weather_frame.is_empty() else {}
     heat = brief.heat_advisory(
@@ -102,7 +109,7 @@ def build_briefing() -> dict[str, Any]:
         "risk": readiness.risk_flags(daily, acts, load),
         "fitness": fit,
         "streak": brief.training_streak(acts, today),
-        "recovery": brief.recovery_timer(acts, now, tsb),
+        "recovery": brief.recovery_timer(acts, now, tsb, garmin_recovery_min=garmin_recovery),
         "weather": _weather_out(weather_row),
         "heat": heat,
         "event": _event_out(today),

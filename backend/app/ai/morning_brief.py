@@ -75,9 +75,38 @@ def _clamp(intensity: Intensity, ceiling: Intensity) -> Intensity:
 # days while HRV, resting HR, and sleep were all fine.
 _LOAD_FLAG_CODES = frozenset({"LOAD_SPIKE", "MONOTONY", "RAPID_RAMP", "DEEP_FATIGUE"})
 
-# A session at/above this Garmin training load counts as a "hard day" for the
-# back-to-back spacing rule and the weekly summary.
+# Hard-day detection for the back-to-back spacing rule and the weekly summary.
+# Garmin Training Effect is the primary signal (it measures intensity directly):
+# a hard session label or meaningful anaerobic TE. Sessions without TE data fall
+# back to the training-load proxy.
 _HARD_LOAD = 150.0
+_HARD_ANAEROBIC_TE = 2.5
+_HARD_TE_LABELS = frozenset(
+    {
+        "TEMPO",
+        "THRESHOLD",
+        "LACTATE_THRESHOLD",
+        "VO2MAX",
+        "ANAEROBIC",
+        "ANAEROBIC_CAPACITY",
+        "SPEED",
+    }
+)
+
+
+def _is_hard_session(session: dict[str, Any]) -> bool:
+    """True if one session looks like a hard effort. TE first, load as fallback."""
+    label = str(session.get("te_label") or "").upper()
+    if label in _HARD_TE_LABELS:
+        return True
+    anaerobic = session.get("anaerobic_te")
+    if isinstance(anaerobic, (int, float)) and anaerobic >= _HARD_ANAEROBIC_TE:
+        return True
+    if session.get("aerobic_te") is not None or anaerobic is not None:
+        # TE data present and says easy — trust it over the load-volume proxy.
+        return False
+    load = session.get("training_load")
+    return isinstance(load, (int, float)) and load >= _HARD_LOAD
 
 
 def _physio_band(readiness: dict[str, Any]) -> str:
@@ -98,14 +127,8 @@ def _physio_band(readiness: dict[str, Any]) -> str:
 
 
 def _hard_effort_on(recent: list[dict[str, Any]], day: date) -> bool:
-    """True if any session on ``day`` looks like a hard effort (load-based)."""
-    for session in recent:
-        if str(session.get("day")) != str(day):
-            continue
-        load = session.get("training_load")
-        if isinstance(load, (int, float)) and load >= _HARD_LOAD:
-            return True
-    return False
+    """True if any session on ``day`` looks like a hard effort."""
+    return any(str(s.get("day")) == str(day) and _is_hard_session(s) for s in recent)
 
 
 def intensity_ceiling(
@@ -341,6 +364,10 @@ Hard rules:
   easy regardless of how good the recovery numbers look.
 - If data_freshness says the overnight data is from yesterday or missing, say so
   and be more conservative — do not treat stale numbers as this morning's.
+- garmin_view holds Garmin's own verdicts (training status, native recovery timer,
+  acute load). When Garmin disagrees with the computed metrics, reconcile the
+  disagreement out loud (e.g. "Garmin calls this week unproductive, but your form
+  is rising...") instead of ignoring either side.
 - Only use numbers you are given. If a key metric is missing, say so rather than
   guessing. Fitness guidance, not medical advice. Keep it concise and phone-readable.
 
@@ -414,12 +441,21 @@ def _prompt_payload(
             "recovered": recovery.get("recovered"),
             "pct_recovered": recovery.get("pct_recovered"),
         },
+        "garmin_view": {
+            "training_status": latest.get("training_status"),
+            "recovery_time_h": _min_to_hours(latest.get("recovery_time_min")),
+            "acute_load": latest.get("acute_load_garmin"),
+            "hrv_weekly_avg": latest.get("hrv_weekly_avg"),
+        },
         "sleep": {
             "hours": _sleep_hours(latest.get("sleep_seconds")),
             "score": latest.get("sleep_score"),
             "deep_hours": _sleep_hours(latest.get("deep_seconds")),
             "rem_hours": _sleep_hours(latest.get("rem_seconds")),
             "awake_hours": _sleep_hours(latest.get("awake_seconds")),
+            "body_battery_recharge": latest.get("body_battery_change"),
+            "restless_moments": latest.get("restless_moments"),
+            "skin_temp_deviation_c": latest.get("skin_temp_dev_c"),
         },
         "vitals": {
             "resting_hr": latest.get("resting_hr"),
@@ -457,6 +493,12 @@ def _sleep_hours(seconds: Any) -> float | None:
     if not isinstance(seconds, (int, float)) or seconds <= 0:
         return None
     return round(seconds / 3600, 1)
+
+
+def _min_to_hours(minutes: Any) -> float | None:
+    if not isinstance(minutes, (int, float)):
+        return None
+    return round(minutes / 60, 1)
 
 
 def build_workout(
@@ -601,6 +643,9 @@ _ACT_COLS = (
     "elevation_gain_m",
     "avg_hr",
     "training_load",
+    "aerobic_te",
+    "anaerobic_te",
+    "te_label",
 )
 
 _FT_PER_M = 3.28084
@@ -632,7 +677,7 @@ def _week_summary(activities: list[dict[str, Any]], today: date) -> dict[str, An
         miles = sum(float(r.get("distance_m") or 0) for _, r in chunk) / _METERS_PER_MILE
         hours = sum(float(r.get("duration_s") or 0) for _, r in chunk) / 3600.0
         vert = sum(float(r.get("elevation_gain_m") or 0) for _, r in chunk) * _FT_PER_M
-        hard_days = {d for d, r in chunk if (r.get("training_load") or 0) >= _HARD_LOAD}
+        hard_days = {d for d, r in chunk if _is_hard_session(r)}
         return miles, hours, vert, len(hard_days)
 
     this_week = [(d, r) for d, r in rows if week_start <= d <= today]
@@ -656,7 +701,7 @@ def _week_summary(activities: list[dict[str, Any]], today: date) -> dict[str, An
             "hard_days": round(p_hard / 4, 1),
         }
 
-    hard_days_all = {d for d, r in rows if (r.get("training_load") or 0) >= _HARD_LOAD}
+    hard_days_all = {d for d, r in rows if _is_hard_session(r)}
     out["days_since_last_hard"] = (today - max(hard_days_all)).days if hard_days_all else None
 
     # Consecutive active days ending yesterday: 0 means yesterday was a rest day.
@@ -719,9 +764,20 @@ _OVERNIGHT_KEYS = (
     "avg_stress",
     "respiration_avg",
     "spo2_avg",
+    "body_battery_change",
+    "restless_moments",
+    "skin_temp_dev_c",
 )
 _DAY_TOTAL_KEYS = ("steps", "active_calories", "total_calories", "intensity_minutes", "floors_up")
-_CURRENT_KEYS = ("training_readiness", "vo2max_running", "weight_kg")
+_CURRENT_KEYS = (
+    "training_readiness",
+    "vo2max_running",
+    "weight_kg",
+    "training_status",
+    "recovery_time_min",
+    "acute_load_garmin",
+    "hrv_weekly_avg",
+)
 
 
 def _merge_metrics(today_row: dict[str, Any], yesterday_row: dict[str, Any]) -> dict[str, Any]:

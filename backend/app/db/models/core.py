@@ -77,6 +77,21 @@ class DailyMetrics(Base):
     respiration_avg: Mapped[float | None] = mapped_column(Float)
     spo2_avg: Mapped[float | None] = mapped_column(Float)
 
+    # Garmin's own daily verdicts (from training_readiness / training_status
+    # payloads): the native recovery timer, its acute-load number, and the
+    # training-status feedback phrase (e.g. "UNPRODUCTIVE_5").
+    training_status: Mapped[str | None] = mapped_column(String(64))
+    recovery_time_min: Mapped[int | None] = mapped_column(Integer)
+    acute_load_garmin: Mapped[int | None] = mapped_column(Integer)
+    hrv_weekly_avg: Mapped[int | None] = mapped_column(Integer)
+
+    # Overnight extras from the sleep payload's top level (outside the DTO):
+    # Body Battery recharge, restlessness, and skin-temperature deviation
+    # (an illness early-warning signal).
+    body_battery_change: Mapped[int | None] = mapped_column(Integer)
+    restless_moments: Mapped[int | None] = mapped_column(Integer)
+    skin_temp_dev_c: Mapped[float | None] = mapped_column(Float)
+
 
 class Activity(Base):
     __tablename__ = "activities"
@@ -98,3 +113,33 @@ class Activity(Base):
     avg_temp_c: Mapped[float | None] = mapped_column(Float)
     training_load: Mapped[float | None] = mapped_column(Float)
     vo2max: Mapped[float | None] = mapped_column(Float)
+
+    # Garmin Training Effect + speed + HR-zone seconds (from the activity-list
+    # payload). te_label is Garmin's session classification, e.g. TEMPO/RECOVERY.
+    aerobic_te: Mapped[float | None] = mapped_column(Float)
+    anaerobic_te: Mapped[float | None] = mapped_column(Float)
+    te_label: Mapped[str | None] = mapped_column(String(64))
+    avg_speed_mps: Mapped[float | None] = mapped_column(Float)
+    zone_1_s: Mapped[float | None] = mapped_column(Float)
+    zone_2_s: Mapped[float | None] = mapped_column(Float)
+    zone_3_s: Mapped[float | None] = mapped_column(Float)
+    zone_4_s: Mapped[float | None] = mapped_column(Float)
+    zone_5_s: Mapped[float | None] = mapped_column(Float)
+
+
+class RacePrediction(Base):
+    """Garmin's daily race-time predictions (seconds), one row per day.
+
+    Built from the ``race_predictions`` snapshot payloads; the payload's own
+    ``calendarDate`` keys the row. A rebuildable projection like the other
+    normalized tables.
+    """
+
+    __tablename__ = "race_predictions"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+
+    time_5k_s: Mapped[int | None] = mapped_column(Integer)
+    time_10k_s: Mapped[int | None] = mapped_column(Integer)
+    time_half_s: Mapped[int | None] = mapped_column(Integer)
+    time_marathon_s: Mapped[int | None] = mapped_column(Integer)

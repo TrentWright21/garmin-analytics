@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
-from app.db.models.core import Activity, DailyMetrics
+from app.db.models.core import Activity, DailyMetrics, RacePrediction
 
 
 def _num(value: Any) -> float | None:
@@ -38,6 +38,22 @@ def _ts(ms: Any) -> datetime | None:
     if f is None:
         return None
     return datetime.fromtimestamp(f / 1000, tz=UTC).replace(tzinfo=None)
+
+
+def _training_status_phrase(payload: Any) -> str | None:
+    """Garmin's training-status feedback phrase (e.g. ``UNPRODUCTIVE_5``).
+
+    Nested per recording device: ``mostRecentTrainingStatus.latestTrainingStatusData
+    .<deviceId>.trainingStatusFeedbackPhrase`` — take the first device's entry.
+    """
+    if not isinstance(payload, dict):
+        return None
+    latest = (payload.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData") or {}
+    for device_data in latest.values():
+        if isinstance(device_data, dict):
+            phrase = device_data.get("trainingStatusFeedbackPhrase")
+            return str(phrase) if phrase else None
+    return None
 
 
 def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
@@ -75,6 +91,10 @@ def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
         m.awake_seconds = _int(dto.get("awakeSleepSeconds"))
         m.sleep_start_local = _ts(dto.get("sleepStartTimestampLocal"))
         m.sleep_end_local = _ts(dto.get("sleepEndTimestampLocal"))
+        # Overnight extras live at the payload's top level, outside the DTO.
+        m.body_battery_change = _int(sleep.get("bodyBatteryChange"))
+        m.restless_moments = _int(sleep.get("restlessMomentsCount"))
+        m.skin_temp_dev_c = _num(sleep.get("avgSkinTempDeviationC"))
 
     if hrv := raw.get("hrv"):
         s = hrv.get("hrvSummary") or {}
@@ -84,6 +104,12 @@ def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
     if tr := raw.get("training_readiness"):
         first = tr[0] if isinstance(tr, list) and tr else tr if isinstance(tr, dict) else {}
         m.training_readiness = _int(first.get("score"))
+        m.recovery_time_min = _int(first.get("recoveryTime"))
+        m.acute_load_garmin = _int(first.get("acuteLoad"))
+        m.hrv_weekly_avg = _int(first.get("hrvWeeklyAverage"))
+
+    if ts_payload := raw.get("training_status"):
+        m.training_status = _training_status_phrase(ts_payload)
 
     if mm := raw.get("max_metrics"):
         first = mm[0] if isinstance(mm, list) and mm else mm if isinstance(mm, dict) else {}
@@ -134,4 +160,42 @@ def build_activity(payload: dict[str, Any]) -> Activity | None:
         avg_temp_c=_num(payload.get("averageTemperature")),
         training_load=_num(payload.get("activityTrainingLoad")),
         vo2max=_num(payload.get("vO2MaxValue")),
+        aerobic_te=_num(payload.get("aerobicTrainingEffect")),
+        anaerobic_te=_num(payload.get("anaerobicTrainingEffect")),
+        te_label=payload.get("trainingEffectLabel"),
+        avg_speed_mps=_num(payload.get("averageSpeed")),
+        zone_1_s=_num(payload.get("hrTimeInZone_1")),
+        zone_2_s=_num(payload.get("hrTimeInZone_2")),
+        zone_3_s=_num(payload.get("hrTimeInZone_3")),
+        zone_4_s=_num(payload.get("hrTimeInZone_4")),
+        zone_5_s=_num(payload.get("hrTimeInZone_5")),
     )
+
+
+def build_race_prediction(
+    payload: dict[str, Any], fallback_day: date | None
+) -> RacePrediction | None:
+    """One ``race_predictions`` snapshot payload -> RacePrediction row.
+
+    The payload's own ``calendarDate`` keys the row (snapshot rows store the
+    fetch date as ``metric_date``, which usually matches but the payload is
+    authoritative); ``fallback_day`` covers payloads without one.
+    """
+    day = fallback_day
+    cal = payload.get("calendarDate")
+    if isinstance(cal, str):
+        try:
+            day = date.fromisoformat(cal)
+        except ValueError:
+            day = fallback_day
+    if day is None:
+        return None
+    times = {
+        "time_5k_s": _int(payload.get("time5K")),
+        "time_10k_s": _int(payload.get("time10K")),
+        "time_half_s": _int(payload.get("timeHalfMarathon")),
+        "time_marathon_s": _int(payload.get("timeMarathon")),
+    }
+    if all(v is None for v in times.values()):
+        return None
+    return RacePrediction(day=day, **times)

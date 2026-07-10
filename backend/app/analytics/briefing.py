@@ -109,9 +109,18 @@ def _recovery_hours_for(load: float | None) -> int:
 
 
 def recovery_timer(
-    activities: pl.DataFrame, now: datetime, tsb: float | None = None
+    activities: pl.DataFrame,
+    now: datetime,
+    tsb: float | None = None,
+    garmin_recovery_min: float | None = None,
 ) -> dict[str, Any]:
     """Time since the last session and an estimate of hours until recovered.
+
+    ``garmin_recovery_min`` — Garmin's native recovery timer from this morning's
+    ``training_readiness`` payload — is the primary number when available (the
+    watch computes it from far more signal than our load table); the documented
+    per-session-load heuristic is the fallback. The value is "minutes remaining
+    as of the morning sync", so it can slightly overstate later in the day.
 
     ``tsb`` (Form, from ``fitness.fitness_summary``) refines the recommendation:
     deeply negative form means keep it easy even once the per-session timer says
@@ -129,16 +138,24 @@ def recovery_timer(
         return {"available": False}
 
     hours_since = round((now - start).total_seconds() / 3600.0, 1)
-    load = _session_load(last)
-    need = _recovery_hours_for(load)
-    pct = min(100, round(hours_since / need * 100)) if need else 100
-    recovered = hours_since >= need
+    if garmin_recovery_min is not None and garmin_recovery_min >= 0:
+        source = "garmin"
+        remaining_h = garmin_recovery_min / 60.0
+        need = round(hours_since + remaining_h, 1)
+        recovered = remaining_h <= 0
+        pct = 100 if recovered or need <= 0 else min(100, round(hours_since / need * 100))
+    else:
+        source = "heuristic"
+        need = float(_recovery_hours_for(_session_load(last)))
+        pct = min(100, round(hours_since / need * 100)) if need else 100
+        recovered = hours_since >= need
 
     if not recovered:
         remaining = round(need - hours_since, 1)
+        timer_label = "Garmin's recovery timer says" if source == "garmin" else "About"
         recommendation = (
-            f"About {remaining:.0f} h until you're recovered from your last session. "
-            "Keep today easy or take it as rest."
+            f"{timer_label} {remaining:.0f} h until you're recovered from your last "
+            "session. Keep today easy or take it as rest."
         )
         next_intensity = "easy"
     elif tsb is not None and tsb < -25:
@@ -162,6 +179,7 @@ def recovery_timer(
         "estimated_recovery_hours": need,
         "pct_recovered": pct,
         "recovered": recovered,
+        "source": source,
         "next_intensity": next_intensity,
         "recommendation": recommendation,
     }

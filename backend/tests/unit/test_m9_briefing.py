@@ -209,6 +209,45 @@ def test_recovery_timer_empty() -> None:
     assert brief.recovery_timer(pl.DataFrame(), datetime.now()) == {"available": False}
 
 
+def test_recovery_timer_prefers_garmin_native_number() -> None:
+    start = datetime.now() - timedelta(hours=6)
+    acts = pl.DataFrame(
+        {
+            "start_time_local": [start],
+            "name": ["easy run"],
+            "training_load": [50.0],
+            "duration_s": [1800.0],
+            "avg_hr": [140.0],
+        }
+    )
+    out = brief.recovery_timer(acts, datetime.now(), garmin_recovery_min=767.0)
+    assert out["source"] == "garmin"
+    assert out["recovered"] is False
+    assert out["estimated_recovery_hours"] == pytest.approx(6 + 767 / 60, abs=0.2)
+    assert "Garmin" in out["recommendation"]
+
+    cleared = brief.recovery_timer(acts, datetime.now(), garmin_recovery_min=0.0)
+    assert cleared["source"] == "garmin"
+    assert cleared["recovered"] is True
+    assert cleared["pct_recovered"] == 100
+
+
+def test_recovery_timer_falls_back_to_heuristic_without_garmin() -> None:
+    start = datetime.now() - timedelta(hours=6)
+    acts = pl.DataFrame(
+        {
+            "start_time_local": [start],
+            "name": ["run"],
+            "training_load": [200.0],
+            "duration_s": [3600.0],
+            "avg_hr": [165.0],
+        }
+    )
+    out = brief.recovery_timer(acts, datetime.now(), garmin_recovery_min=None)
+    assert out["source"] == "heuristic"
+    assert out["estimated_recovery_hours"] == 48
+
+
 # -- heat advisory -----------------------------------------------------------
 
 

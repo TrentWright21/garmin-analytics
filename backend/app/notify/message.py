@@ -162,7 +162,10 @@ def _vitals_line(latest: dict[str, Any]) -> str | None:
     if latest.get("resting_hr") is not None:
         parts.append(f"RHR {int(latest['resting_hr'])}bpm")
     if latest.get("body_battery_high") is not None:
-        parts.append(f"Body Battery {int(latest['body_battery_high'])}")
+        battery = f"Body Battery {int(latest['body_battery_high'])}"
+        if latest.get("body_battery_change") is not None:
+            battery += f" ({int(latest['body_battery_change']):+d} overnight)"
+        parts.append(battery)
     if latest.get("avg_stress") is not None:
         parts.append(f"Stress {int(latest['avg_stress'])}")
     return " · ".join(parts) if parts else None
@@ -179,12 +182,24 @@ def _activity_totals_line(latest: dict[str, Any]) -> str | None:
     return "Yesterday: " + " · ".join(parts) if parts else None
 
 
+_GOOD_TRAINING_STATUSES = frozenset({"PRODUCTIVE", "PEAKING"})
+
+
+def _pretty_status(phrase: str) -> str:
+    """Humanize a Garmin feedback phrase: ``UNPRODUCTIVE_5`` -> ``Unproductive``."""
+    words = [w for w in phrase.split("_") if w and not w.isdigit()]
+    return " ".join(words).capitalize() if words else phrase
+
+
 def _fitness_line(brief: dict[str, Any], latest: dict[str, Any]) -> str | None:
     parts: list[str] = []
     if latest.get("vo2max_running") is not None:
         parts.append(f"VO2max {round(float(latest['vo2max_running']))}")
     if latest.get("training_readiness") is not None:
         parts.append(f"Garmin readiness {int(latest['training_readiness'])}")
+    status = str(latest.get("training_status") or "")
+    if status and status.split("_")[0] not in _GOOD_TRAINING_STATUSES:
+        parts.append(f"Garmin status: {_pretty_status(status)}")
     fit = brief.get("fitness") or {}
     if fit.get("available") and fit.get("form_tsb") is not None:
         state = fit.get("form_state", "")
@@ -209,13 +224,34 @@ def _weather_line(brief: dict[str, Any]) -> str | None:
     return line
 
 
+def _pace_str(distance_mi: Any, duration_s: Any) -> str | None:
+    """Minutes-per-mile pace, e.g. ``9:41/mi``. None when not computable."""
+    if not isinstance(distance_mi, (int, float)) or distance_mi <= 0:
+        return None
+    if not isinstance(duration_s, (int, float)) or duration_s <= 0:
+        return None
+    sec_per_mi = duration_s / distance_mi
+    if sec_per_mi > 30 * 60:  # slower than 30:00/mi — pace is meaningless
+        return None
+    return f"{int(sec_per_mi // 60)}:{int(sec_per_mi % 60):02d}/mi"
+
+
 def _last_activity_line(recent: list[dict[str, Any]]) -> str | None:
     if not recent:
         return None
     last = recent[-1]
     label = last.get("name") or last.get("activity_type") or "Activity"
+    parts = [f"Last session: {label}"]
     dist = last.get("distance_mi")
-    return f"Last session: {label}" + (f" {dist} mi" if dist else "")
+    if dist:
+        parts.append(f"{dist} mi")
+    pace = _pace_str(dist, last.get("duration_s"))
+    if pace:
+        parts.append(pace)
+    aerobic = last.get("aerobic_te")
+    if isinstance(aerobic, (int, float)) and aerobic > 0:
+        parts.append(f"TE {aerobic:.1f} aerobic")
+    return " · ".join(parts)
 
 
 def _current_state_lines(brief: dict[str, Any], latest: dict[str, Any]) -> list[str]:
