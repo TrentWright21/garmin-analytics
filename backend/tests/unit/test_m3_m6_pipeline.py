@@ -362,3 +362,46 @@ class TestApi:
             assert plan["workout"]["workout_type"]
             assert plan["workout"]["intensity"] in ("rest", "recovery", "easy", "moderate", "hard")
             assert client.get("/api/briefing/workout").json() == plan
+
+    def test_manual_sync_status_lifecycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """POST /api/sync runs in the background; /api/sync/status reports the
+        real outcome (TestClient executes background tasks before returning,
+        so each POST's terminal state is visible on the next GET)."""
+        from app.api.routes import core as core_routes
+        from app.collectors.base import CollectorAuthError
+        from app.main import app
+
+        class OkEngine:
+            def sync_recent(self, days: int = 2) -> dict[str, int]:
+                return {"days": days, "raw_rows": 5, "errors": 0, "activities": 1}
+
+        with TestClient(app) as client:
+            assert client.get("/api/sync/status").json()["state"] == "idle"
+
+            # success path: started -> (background runs) -> complete with stats
+            monkeypatch.setattr(core_routes, "build_sync_engine", lambda _c: OkEngine())
+            assert client.post("/api/sync?days=2").json()["status"] == "sync started"
+            status = client.get("/api/sync/status").json()
+            assert status["state"] == "complete"
+            assert status["stats"]["activities"] == 1
+            assert status["error"] is None
+
+            # a POST while one is running is a no-op acknowledgement
+            core_routes._set_sync_status(state="running")
+            assert client.post("/api/sync").json()["status"] == "already running"
+            assert client.get("/api/sync/status").json()["state"] == "running"
+
+            # failure path: friendly message, no exception internals leaked
+            class BadEngine:
+                def sync_recent(self, days: int = 2) -> dict[str, int]:
+                    raise CollectorAuthError("secret-token-abc in a raw message")
+
+            core_routes._set_sync_status(state="idle")
+            monkeypatch.setattr(core_routes, "build_sync_engine", lambda _c: BadEngine())
+            assert client.post("/api/sync").json()["status"] == "sync started"
+            status = client.get("/api/sync/status").json()
+            assert status["state"] == "error"
+            assert "Garmin login failed" in status["error"]
+            assert "secret-token-abc" not in status["error"]
+
+        core_routes._set_sync_status(state="idle", error=None, stats=None)

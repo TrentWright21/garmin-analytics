@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api, authApi, getToken } from "./api";
 import { Icon } from "./components/icons";
 import Login from "./components/Login";
 import { LayoutToggle } from "./components/LayoutToggle";
+import { SyncButton, SyncStatusLine, type SyncState } from "./components/SyncButton";
 import { useLayoutMode } from "./lib/layoutMode";
 import Activities from "./pages/Activities";
 import Briefing from "./pages/Briefing";
@@ -42,16 +43,16 @@ const MOBILE_TABS = [
 type AuthState = "loading" | "required" | "ok";
 
 interface ShellProps {
-  syncing: boolean;
+  syncState: SyncState;
+  syncMessage: string | null;
   onSync: () => void;
   authRequired: boolean;
   onLogout: () => void;
-  toast: string | null;
 }
 
 /** The original desktop dashboard — unchanged layout, plus the layout toggle
  * in the sidebar footer. Renders when the effective layout is "desktop". */
-function DesktopShell({ syncing, onSync, authRequired, onLogout, toast }: ShellProps) {
+function DesktopShell({ syncState, syncMessage, onSync, authRequired, onLogout }: ShellProps) {
   const [navOpen, setNavOpen] = useState(false);
 
   return (
@@ -99,10 +100,8 @@ function DesktopShell({ syncing, onSync, authRequired, onLogout, toast }: ShellP
           </div>
           <LayoutToggle />
         </div>
-        <button className="btn primary" onClick={onSync} disabled={syncing}>
-          <Icon name="sync" size={15} />
-          {syncing ? "Syncing…" : "Sync now"}
-        </button>
+        <SyncButton state={syncState} onSync={onSync} />
+        <SyncStatusLine state={syncState} message={syncMessage} />
         {authRequired && (
           <button className="btn" style={{ marginTop: 8 }} onClick={onLogout}>
             Log out
@@ -127,15 +126,13 @@ function DesktopShell({ syncing, onSync, authRequired, onLogout, toast }: ShellP
           <Route path="*" element={<Navigate to="/briefing" replace />} />
         </Routes>
       </main>
-
-      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
 
 /** iPhone-first shell: sticky header, single-column content, fixed bottom nav
  * with safe-area padding. Renders when the effective layout is "mobile". */
-function MobileShell({ syncing, onSync, authRequired, onLogout, toast }: ShellProps) {
+function MobileShell({ syncState, syncMessage, onSync, authRequired, onLogout }: ShellProps) {
   return (
     <div className="m-app">
       <header className="m-header">
@@ -156,7 +153,8 @@ function MobileShell({ syncing, onSync, authRequired, onLogout, toast }: ShellPr
             path="/more"
             element={
               <More
-                syncing={syncing}
+                syncState={syncState}
+                syncMessage={syncMessage}
                 onSync={onSync}
                 authRequired={authRequired}
                 onLogout={onLogout}
@@ -188,15 +186,17 @@ function MobileShell({ syncing, onSync, authRequired, onLogout, toast }: ShellPr
           </NavLink>
         ))}
       </nav>
-
-      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
 
+const SYNC_POLL_MS = 3000;
+const SYNC_TIMEOUT_MS = 10 * 60_000;
+
 export default function App() {
-  const [toast, setToast] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const syncBusy = useRef(false); // hard double-click guard (state updates lag clicks)
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [authRequired, setAuthRequired] = useState(false);
   const { effective } = useLayoutMode();
@@ -232,17 +232,51 @@ export default function App() {
     return <Login onSuccess={() => setAuthState("ok")} />;
   }
 
+  /** Sync -> Syncing… -> Refresh. The POST returns as soon as the server
+   * accepts the job, so we poll /api/sync/status until the background work
+   * actually settles — "Refresh" only ever appears once the data is ready. */
   async function syncNow() {
-    setSyncing(true);
-    setToast("Sync started — Garmin data refreshing in the background…");
+    if (syncBusy.current) return;
+    syncBusy.current = true;
+    setSyncState("syncing");
+    setSyncMessage("Syncing your Garmin data — this can take a minute or two.");
     try {
       await api.sync(3);
-      setTimeout(() => setToast("Sync running. Refresh in a minute to see new data."), 400);
-    } catch {
-      setToast("Sync failed — is the backend running?");
+      const startedAt = Date.now();
+      for (;;) {
+        await new Promise((r) => setTimeout(r, SYNC_POLL_MS));
+        const s = await api.syncStatus();
+        if (s.state === "complete") {
+          setSyncState("complete");
+          setSyncMessage("Sync complete. Refresh the page to load the latest Garmin data.");
+          return;
+        }
+        if (s.state === "error") {
+          setSyncState("error");
+          setSyncMessage(s.error ?? "Sync failed - check the server logs.");
+          return;
+        }
+        if (s.state === "idle") {
+          // The server restarted mid-sync and lost the in-memory job state.
+          setSyncState("error");
+          setSyncMessage("The server lost track of the sync - try again.");
+          return;
+        }
+        if (Date.now() - startedAt > SYNC_TIMEOUT_MS) {
+          setSyncState("error");
+          setSyncMessage("Sync is taking unusually long - check the server, then try again.");
+          return;
+        }
+      }
+    } catch (e) {
+      setSyncState("error");
+      setSyncMessage(
+        e instanceof Error && e.message.includes("429")
+          ? "Too many sync requests - wait a minute and try again."
+          : "Couldn't reach the backend - is it running?",
+      );
     } finally {
-      setSyncing(false);
-      setTimeout(() => setToast(null), 6000);
+      syncBusy.current = false;
     }
   }
 
@@ -252,11 +286,11 @@ export default function App() {
   };
 
   const shell: ShellProps = {
-    syncing,
+    syncState,
+    syncMessage,
     onSync: syncNow,
     authRequired,
     onLogout,
-    toast,
   };
 
   // Render ONLY the effective shell — never both. Pages, hooks, and API calls

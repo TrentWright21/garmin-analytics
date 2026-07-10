@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Icon } from "../../components/icons";
 import { LayoutToggle } from "../../components/LayoutToggle";
+import { SyncButton, SyncStatusLine, type SyncState } from "../../components/SyncButton";
 import { Card } from "../../components/ui";
 
 const LINKS = [
@@ -13,12 +14,14 @@ const LINKS = [
 ] as const;
 
 export default function More({
-  syncing,
+  syncState,
+  syncMessage,
   onSync,
   authRequired,
   onLogout,
 }: {
-  syncing: boolean;
+  syncState: SyncState;
+  syncMessage: string | null;
   onSync: () => void;
   authRequired: boolean;
   onLogout: () => void;
@@ -62,10 +65,8 @@ export default function More({
       </Card>
 
       <Card title="Data" className="m-gap-top">
-        <button className="btn primary m-btn-full" onClick={onSync} disabled={syncing}>
-          <Icon name="sync" size={15} />
-          {syncing ? "Syncing…" : "Sync now"}
-        </button>
+        <SyncButton state={syncState} onSync={onSync} fullWidth />
+        <SyncStatusLine state={syncState} message={syncMessage} />
         {authRequired && (
           <button className="btn m-btn-full" style={{ marginTop: 10 }} onClick={onLogout}>
             Log out

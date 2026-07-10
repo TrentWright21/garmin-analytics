@@ -378,6 +378,14 @@ export interface TodayWorkout {
   };
 }
 
+export interface SyncStatus {
+  state: "idle" | "running" | "complete" | "error";
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  stats: Record<string, number> | null;
+}
+
 export interface BodyBatteryReport {
   days: { date: string | null; charged: number | null; drained: number | null }[];
   series: { ts_ms: number; level: number }[];
@@ -521,6 +529,9 @@ export const api = {
     bustGetCache(); // fresh data incoming — don't serve stale cached GETs
     return request<{ status: string; days: string }>(`/sync?days=${days}`, { method: "POST" });
   },
+  // Deliberately uncached: this is polled to learn when the background sync
+  // actually finished, so it must never serve a stale answer.
+  syncStatus: () => request<SyncStatus>(`/sync/status`),
 
   coachStatus: () => get<{ configured: boolean }>(`/coach/status`),
   conversations: () => get<{ conversations: ConversationSummary[] }>(`/coach/conversations`),

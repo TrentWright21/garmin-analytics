@@ -567,6 +567,28 @@ table.tbl th.num {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+/* Inline button-sized spinner. Same footprint as the 15px sync icon it swaps
+   with, so the button label doesn't jump when syncing starts. */
+.spinner-sm {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+/* Sync status line under the button — wraps, never overflows. */
+.sync-status {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.sync-status.err {
+  color: #b42318;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);

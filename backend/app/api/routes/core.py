@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import threading
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.analytics import engine as ax
+from app.collectors.base import CollectorAuthError, CollectorRateLimitError
 from app.collectors.garmin_connect import GarminConnectCollector
 from app.collectors.sync import build_sync_engine
 from app.config import get_settings
@@ -74,14 +76,79 @@ def insights(days: int = Query(default=365, ge=30, le=3650)) -> dict[str, list[s
     return {"insights": ax.generate_insights(daily, acts)}
 
 
+# -- manual sync + its status -------------------------------------------------
+# The POST returns immediately (a sync takes a minute or more; holding the
+# request open would trip mobile/browser timeouts), so this tiny in-process
+# tracker is how the dashboard learns when the background work actually
+# finished. One dict + lock — deliberately not a job queue. It tracks the
+# MANUAL button only; the 06:30 scheduler job doesn't pass through here.
+_sync_status_lock = threading.Lock()
+_sync_status: dict[str, Any] = {
+    "state": "idle",  # idle | running | complete | error
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+    "stats": None,
+}
+
+
+def _set_sync_status(**updates: Any) -> None:
+    with _sync_status_lock:
+        _sync_status.update(updates)
+
+
+def _friendly_sync_error(exc: Exception) -> str:
+    """User-facing failure text. Never the raw exception — no tracebacks,
+    no credentials, no Garmin response bodies."""
+    if isinstance(exc, CollectorAuthError):
+        return "Garmin login failed - check the credentials on the server."
+    if isinstance(exc, CollectorRateLimitError):
+        return "Garmin rate-limited the sync - wait a while and try again."
+    return "Sync failed - check the server logs for details."
+
+
 @router.post("/sync", dependencies=[Depends(rate_limiter(_sync_limiter))])
 def trigger_sync(
     background: BackgroundTasks, days: int = Query(default=2, ge=1, le=365)
 ) -> dict[str, str]:
-    """Kick a sync without blocking the request (the dashboard 'Sync now' button)."""
+    """Kick a sync without blocking the request (the dashboard 'Sync now' button).
+
+    Poll ``GET /api/sync/status`` to learn when it actually completed; a second
+    POST while one is running is a no-op (the client just keeps polling).
+    """
+    with _sync_status_lock:
+        if _sync_status["state"] == "running":
+            return {"status": "already running", "days": str(days)}
+        _sync_status.update(
+            {
+                "state": "running",
+                "started_at": datetime.now(UTC).isoformat(),
+                "finished_at": None,
+                "error": None,
+                "stats": None,
+            }
+        )
 
     def run() -> None:
-        build_sync_engine(GarminConnectCollector(get_settings())).sync_recent(days=days)
+        try:
+            stats = build_sync_engine(GarminConnectCollector(get_settings())).sync_recent(days=days)
+            _set_sync_status(
+                state="complete", finished_at=datetime.now(UTC).isoformat(), stats=stats
+            )
+        except Exception as exc:
+            log.warning("sync.manual_failed", err=type(exc).__name__)
+            _set_sync_status(
+                state="error",
+                finished_at=datetime.now(UTC).isoformat(),
+                error=_friendly_sync_error(exc),
+            )
 
     background.add_task(run)
     return {"status": "sync started", "days": str(days)}
+
+
+@router.get("/sync/status")
+def sync_status() -> dict[str, Any]:
+    """Where the manual sync stands: idle | running | complete | error."""
+    with _sync_status_lock:
+        return dict(_sync_status)
