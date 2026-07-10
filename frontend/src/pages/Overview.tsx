@@ -98,7 +98,7 @@ function RiskCard() {
   return (
     <Card
       title="Overtraining & injury risk"
-      sub="Rule-based flags with the evidence behind each"
+      sub="Rule-based heuristics with the evidence behind each — cautions, not diagnoses"
       right={r && <Pill status={bandStatus(r.risk_band)}>{r.flag_count} flag{r.flag_count === 1 ? "" : "s"}</Pill>}
     >
       {risk.loading ? (

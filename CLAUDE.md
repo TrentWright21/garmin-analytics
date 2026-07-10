@@ -152,9 +152,22 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   yellow flag), and `generate_insights` use z; legacy `hrv_baseline_deviation`
   % method kept ONLY as thin-history/flat-baseline fallback + under legacy
   `readiness_score`. Verified on real 290d HRV history (263 scored days,
-  median z -0.05, sensible band counts). 193 tests. **NEXT UP:** droplet
-  365-day backfill (ops item), then Phase 2 item 2 (one load pipeline) — see
-  IMPROVEMENT_PLAN.md.
+  median z -0.05, sensible band counts). 193 tests.
+- **2026-07-09 (same day): Phase 2 items 2+4+8 — one load pipeline, robust HR
+  max + athlete config, honest ACWR copy — built, awaiting Trent's commit.**
+  `daily_training_load` TRIMP fallback (82/159 real activities had no Garmin
+  load); `engine.acwr` = EWMA acute (=PMC ATL) / 28d EWMA chronic over the one
+  shared load series (28d, NOT the 42d CTL — the Garmin cross-check proved 42d
+  reads ~0.3 high and fired a spurious red); Garmin's own ratio normalized as
+  `daily_metrics.acwr_garmin` + surfaced in LOAD_SPIKE evidence and the brief's
+  `garmin_view`; `estimate_hr_max` -> 99.5th percentile; `AthleteConfig`
+  (hr_max/hr_rest) + commented `athlete:` yaml block, wired via new engine
+  loaders `training_load_for`/`load_training_load` (all call sites ported);
+  LOAD_SPIKE copy + Overview risk-panel subtitle softened to "cautions, not
+  diagnoses". 197 tests, frontend builds. **NEXT UP:** droplet 365-day backfill
+  (ops item), then Phase 2 remaining: sleep debt into readiness, zone-based
+  intensity distribution, best-run-window, goal-aware fallback templates,
+  retire legacy readiness — see IMPROVEMENT_PLAN.md.
 - **Backfill status (corrected 2026-07-08):** the DEV machine DB already has
   **367 days** of daily data (290 d HRV, 119 activity days) — earlier "only 30
   days" notes were stale. Only the **droplet's** separate DB is still ~30 days;

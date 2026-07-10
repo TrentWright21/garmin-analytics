@@ -14,6 +14,7 @@ from typing import Any
 import polars as pl
 from sqlalchemy import Date, DateTime, Float, Integer, select
 
+from app.analytics import physiology
 from app.db.engine import session_scope
 from app.db.models.core import Activity, DailyMetrics
 from app.db.models.weather import DailyWeather
@@ -76,17 +77,50 @@ def period_summary(daily: pl.DataFrame, every: str = "1w") -> pl.DataFrame:
 # -- training load -------------------------------------------------------------
 
 
-def daily_training_load(activities: pl.DataFrame) -> pl.DataFrame:
-    """Sum Garmin's per-activity training load into one value per day.
+# TRIMP's heart-rate-reserve math needs a resting HR; when the athlete hasn't
+# configured a true one, this conservative population default applies to the
+# rare sessions Garmin didn't attach its own load to.
+DEFAULT_HR_REST = 60.0
 
-    Falls back to a HR-duration proxy when Garmin didn't compute load.
+# EWMA-based ACWR needs some history before the chronic side means anything;
+# report null for the first two weeks rather than a confident-looking 1.0.
+_ACWR_WARMUP_DAYS = 14
+
+
+def daily_training_load(
+    activities: pl.DataFrame,
+    *,
+    hr_rest: float | None = None,
+    hr_max: float | None = None,
+) -> pl.DataFrame:
+    """Sum per-activity training load into one value per day. ONE load pipeline:
+    Garmin's own load when present, Banister TRIMP (``physiology.trimp``) when
+    not — the old ``minutes * HR/100`` proxy had no physiological basis and
+    scored easy and hard minutes almost alike.
+
+    ``hr_rest`` / ``hr_max`` sharpen the TRIMP fallback; pass the athlete's
+    configured values (see ``training_load_for``). Defaults: HR max estimated
+    from the activities frame, resting HR ``DEFAULT_HR_REST``.
     """
     if activities.is_empty():
         return pl.DataFrame({"day": [], "load": []})
-    proxy = (pl.col("duration_s") / 60) * (pl.col("avg_hr") / 100)
+    rest = hr_rest if hr_rest is not None else DEFAULT_HR_REST
+    peak = physiology.estimate_hr_max(activities, configured=hr_max)
+
+    def _trimp_fallback(row: dict[str, Any]) -> float | None:
+        dur, hr = row.get("duration_s"), row.get("avg_hr")
+        if dur is None or hr is None:
+            return None
+        return physiology.trimp(dur / 60.0, hr, rest, peak)
+
+    fallback = (
+        pl.struct(["duration_s", "avg_hr"]).map_elements(_trimp_fallback, return_dtype=pl.Float64)
+        if {"duration_s", "avg_hr"}.issubset(activities.columns)
+        else pl.lit(None, dtype=pl.Float64)
+    )
     return (
         activities.with_columns(
-            pl.coalesce([pl.col("training_load"), proxy]).fill_null(0).alias("_load")
+            pl.coalesce([pl.col("training_load"), fallback]).fill_null(0).alias("_load")
         )
         .group_by("day")
         .agg(pl.col("_load").sum().alias("load"))
@@ -94,24 +128,47 @@ def daily_training_load(activities: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def acwr(load_by_day: pl.DataFrame) -> pl.DataFrame:
-    """Acute:Chronic Workload Ratio — 7d avg load / 28d avg load.
+# Chronic time constant for the EWMA ACWR. The literature's EWMA variant
+# (Williams et al.) and Garmin's own ratio both use a ~28-day chronic; the
+# PMC's 42-day CTL is NOT reused here because a longer denominator reads
+# systematically higher during any build phase, miscalibrating the 1.3/1.5
+# thresholds (verified against Garmin's dailyAcuteChronicWorkloadRatio).
+ACWR_CHRONIC_TAU = 28
 
-    The classic injury-risk indicator: roughly 0.8-1.3 is the sweet spot;
-    sustained >1.5 means load is spiking faster than the body has adapted to.
+
+def acwr(load_by_day: pl.DataFrame) -> pl.DataFrame:
+    """EWMA Acute:Chronic Workload Ratio over the ONE daily-load series.
+
+    Same machinery as the Performance Management Chart (dense daily calendar +
+    exponential averages; acute IS the PMC's ATL), with the literature's 28-day
+    chronic constant (Williams et al.) — comparable to Garmin's own ratio and
+    to the 1.3/1.5 thresholds. EWMA weights recent days more and never drops a
+    spike off a window cliff the way the old rolling means did. ~0.8-1.3 is the
+    common sweet-spot heuristic — treat it as a caution signal, not an injury
+    prediction (the causal ACWR claims are contested; see Impellizzeri et al.).
+
+    Column names (day/load/acute/chronic/acwr) are unchanged for consumers.
+    The first ``_ACWR_WARMUP_DAYS`` are null: too little history to judge.
     """
     if load_by_day.is_empty():
         return load_by_day
-    df = (
-        load_by_day.sort("day")
-        .upsample("day", every="1d")
-        .with_columns(pl.col("load").fill_null(0))
-    )
-    return df.with_columns(
-        acute=pl.col("load").rolling_mean(7, min_samples=4),
-        chronic=pl.col("load").rolling_mean(28, min_samples=14),
-    ).with_columns(
-        acwr=(pl.col("acute") / pl.when(pl.col("chronic") > 0).then(pl.col("chronic"))).round(2)
+    from app.analytics.fitness import FATIGUE_TAU, _alpha, _dense_daily_load
+
+    warm = pl.int_range(pl.len()) >= _ACWR_WARMUP_DAYS
+    return (
+        _dense_daily_load(load_by_day)
+        .with_columns(
+            acute=pl.when(warm).then(
+                pl.col("load").ewm_mean(alpha=_alpha(FATIGUE_TAU), adjust=False).round(1)
+            ),
+            chronic=pl.when(warm).then(
+                pl.col("load").ewm_mean(alpha=_alpha(ACWR_CHRONIC_TAU), adjust=False).round(1)
+            ),
+        )
+        .with_columns(
+            acwr=(pl.col("acute") / pl.when(pl.col("chronic") > 0).then(pl.col("chronic"))).round(2)
+        )
+        .select("day", "load", "acute", "chronic", "acwr")
     )
 
 
@@ -397,6 +454,24 @@ def load_activities(start: date | None = None, end: date | None = None) -> pl.Da
         rows = s.execute(q.order_by(Activity.start_time_local)).scalars().all()
         data = [{c.name: getattr(r, c.name) for c in Activity.__table__.columns} for r in rows]
     return pl.DataFrame(data, schema=_model_schema(Activity))
+
+
+def training_load_for(activities: pl.DataFrame) -> pl.DataFrame:
+    """``daily_training_load`` with the athlete's configured HR constants applied.
+
+    Config is a loader-layer concern (the analytics stay pure), so every route/
+    tool that already has an activities frame goes through here instead of
+    calling ``daily_training_load`` bare.
+    """
+    from app.config import get_app_config
+
+    athlete = get_app_config().athlete
+    return daily_training_load(activities, hr_rest=athlete.hr_rest, hr_max=athlete.hr_max)
+
+
+def load_training_load(start: date | None = None, end: date | None = None) -> pl.DataFrame:
+    """Loader: activities in range -> daily training load, athlete config applied."""
+    return training_load_for(load_activities(start, end))
 
 
 def load_activity(activity_id: int) -> dict[str, Any] | None:

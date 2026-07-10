@@ -27,7 +27,7 @@ from anthropic.types.beta import BetaMessageParam, BetaThinkingConfigAdaptivePar
 from app.analytics import engine as ax
 from app.analytics import fitness, readiness, session
 from app.analytics.physiology import estimate_hr_max
-from app.config import Settings
+from app.config import Settings, get_app_config
 
 MODEL = "claude-opus-4-8"
 MAX_TOKENS = 16000
@@ -160,17 +160,18 @@ def get_rolling_trends(days: int = 90) -> str:
 def get_training_load(days: int = 90) -> str:
     """Training load: daily ACWR and weekly Foster monotony/strain.
 
-    Returns the last 14 days of load with acute (7d) and chronic (28d)
-    averages and their ratio (ACWR), plus the last 4 weeks of monotony and
-    strain. Reference: ACWR sweet spot ~0.8-1.3, sustained >1.5 = elevated
-    injury risk; monotony >2.0 with high load predicts overtraining.
+    Returns the last 14 days of load with acute (7-day EWMA, the PMC's ATL)
+    and chronic (28-day EWMA) values and their ratio (ACWR), all over the same
+    daily-load series as the Performance Management Chart. Reference: ACWR
+    sweet spot ~0.8-1.3; treat higher values as a caution to add easy days,
+    not an injury prediction. Monotony >2.0 with high load predicts overtraining.
 
     Args:
         days: History window to compute over, 42-365 (default 90).
     """
     days = max(42, min(days, 365))
     start, end = _range(days)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     if load.is_empty():
         return _js({"note": "no activities in range"})
     acwr_rows = [_compact(r) for r in ax.acwr(load).tail(14).to_dicts()]
@@ -185,8 +186,9 @@ def get_training_load(days: int = 90) -> str:
             "acwr_last_14_days": acwr_rows,
             "weekly_monotony_strain": mono_rows,
             "reference": {
+                "acwr_definition": "7d EWMA acute / 28d EWMA chronic, one shared load series",
                 "acwr_sweet_spot": "0.8-1.3",
-                "acwr_elevated_risk": ">1.5 sustained",
+                "acwr_caution": ">1.5 sustained — a heuristic caution, not an injury prediction",
                 "monotony_risk": ">2.0 with high weekly load",
             },
         }
@@ -250,7 +252,8 @@ def get_recent_activities(limit: int = 10) -> str:
 
 
 def _hr_max() -> float:
-    return estimate_hr_max(ax.load_activities(), ax.load_daily())
+    configured = get_app_config().athlete.hr_max
+    return estimate_hr_max(ax.load_activities(), ax.load_daily(), configured=configured)
 
 
 def get_fitness_form(days: int = 180) -> str:
@@ -266,7 +269,7 @@ def get_fitness_form(days: int = 180) -> str:
     """
     days = max(28, min(days, 365))
     start, end = _range(days)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     return _js(fitness.fitness_summary(load))
 
 
@@ -280,7 +283,7 @@ def get_readiness_detail() -> str:
     """
     start, end = _range(90)
     daily = ax.load_daily(start, end)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     return _js(readiness.daily_readiness(daily, load))
 
 
@@ -295,7 +298,7 @@ def get_risk_flags() -> str:
     start, end = _range(90)
     daily = ax.load_daily(start, end)
     acts = ax.load_activities(start, end)
-    load = ax.daily_training_load(acts)
+    load = ax.training_load_for(acts)
     return _js(readiness.risk_flags(daily, acts, load))
 
 

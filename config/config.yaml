@@ -30,6 +30,14 @@ goal:
   focus: endurance
   note: "Build aerobic base and climb prep for Mount Whitney"
 
+# Optional physiological constants. `hr_max` from a real max-effort test makes
+# every HR zone and load number sharper (otherwise the 99.5th percentile of
+# observed maxes is used); `hr_rest` is your true resting HR (used by the TRIMP
+# load fallback for sessions Garmin didn't score). Uncomment to set.
+# athlete:
+#   hr_max: 185
+#   hr_rest: 52
+
 # Home location for the local weather feed (Open-Meteo, no API key needed).
 location:
   name: Hartselle, AL

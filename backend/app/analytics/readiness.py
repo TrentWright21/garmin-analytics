@@ -243,19 +243,28 @@ def risk_flags(
     if load_by_day is None and not activities.is_empty():
         load_by_day = ax.daily_training_load(activities)
 
-    # 1. Load spike — acute:chronic workload ratio.
+    # 1. Load spike — acute:chronic ratio (ATL/CTL from the EWMA fitness model).
+    # Copy is deliberately hedged: high-ACWR injury claims are an association,
+    # not established causation (Impellizzeri et al.) — these are heuristics.
     if load_by_day is not None and not load_by_day.is_empty():
         acwr_val = _latest(ax.acwr(load_by_day), "acwr")
         if acwr_val is not None:
+            evidence: dict[str, Any] = {"acwr": acwr_val}
+            garmin_acwr = (
+                _latest(daily.sort("day"), "acwr_garmin") if not daily.is_empty() else None
+            )
+            if garmin_acwr is not None:
+                evidence["garmin_acwr"] = garmin_acwr
             if acwr_val >= 1.5:
                 flags.append(
                     _flag(
                         "LOAD_SPIKE",
                         "red",
                         "Training load is spiking",
-                        f"Your 7-day load is {acwr_val:.2f}x your 28-day baseline "
-                        "(>=1.5 is the high-injury-risk zone). Insert an easier day or two.",
-                        {"acwr": acwr_val},
+                        f"Your acute load (7d) is {acwr_val:.2f}x your chronic base (28d) — "
+                        "well above the ~0.8-1.3 sweet spot. A heuristic caution, not an "
+                        "injury prediction, but insert an easier day or two.",
+                        evidence,
                     )
                 )
             elif acwr_val >= 1.3:
@@ -264,9 +273,9 @@ def risk_flags(
                         "LOAD_SPIKE",
                         "yellow",
                         "Load ramping above the sweet spot",
-                        f"Acute:chronic ratio {acwr_val:.2f} (sweet spot 0.8-1.3). "
+                        f"Acute:chronic ratio {acwr_val:.2f} (sweet spot ~0.8-1.3). "
                         "Fine short-term, but don't stack more hard days on top.",
-                        {"acwr": acwr_val},
+                        evidence,
                     )
                 )
 

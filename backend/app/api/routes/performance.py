@@ -20,7 +20,7 @@ from app.analytics import fitness, readiness, session
 from app.analytics.physiology import estimate_hr_max
 from app.collectors.base import CollectorAuthError, CollectorError, CollectorRateLimitError
 from app.collectors.garmin_connect import GarminConnectCollector
-from app.config import get_settings
+from app.config import get_app_config, get_settings
 from app.db.engine import session_scope, store_raw
 from app.db.models.core import RawApiData
 from app.logging import get_logger
@@ -35,15 +35,16 @@ def _range(days: int) -> tuple[date, date]:
 
 
 def _hr_max() -> float:
-    """Estimate HR max from all stored activities + daily maxima, cached per call."""
-    return estimate_hr_max(ax.load_activities(), ax.load_daily())
+    """Best HR max: the configured athlete value, else a robust observed estimate."""
+    configured = get_app_config().athlete.hr_max
+    return estimate_hr_max(ax.load_activities(), ax.load_daily(), configured=configured)
 
 
 @router.get("/analytics/fitness")
 def fitness_pmc(days: int = Query(default=180, ge=28, le=3650)) -> dict[str, Any]:
     """Performance Management Chart: Fitness (CTL), Fatigue (ATL), Form (TSB)."""
     start, end = _range(days)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     pmc = fitness.performance_management(load)
     return {
         "summary": fitness.fitness_summary(load),
@@ -71,7 +72,7 @@ def readiness_v2() -> dict[str, Any]:
     """Composite Red/Yellow/Green readiness with ranked drivers."""
     start, end = _range(90)
     daily = ax.load_daily(start, end)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     return readiness.daily_readiness(daily, load)
 
 
@@ -81,7 +82,7 @@ def risk() -> dict[str, Any]:
     start, end = _range(90)
     daily = ax.load_daily(start, end)
     acts = ax.load_activities(start, end)
-    load = ax.daily_training_load(acts)
+    load = ax.training_load_for(acts)
     return readiness.risk_flags(daily, acts, load)
 
 

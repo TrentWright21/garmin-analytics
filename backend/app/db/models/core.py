@@ -78,12 +78,14 @@ class DailyMetrics(Base):
     spo2_avg: Mapped[float | None] = mapped_column(Float)
 
     # Garmin's own daily verdicts (from training_readiness / training_status
-    # payloads): the native recovery timer, its acute-load number, and the
-    # training-status feedback phrase (e.g. "UNPRODUCTIVE_5").
+    # payloads): the native recovery timer, its acute-load number, the
+    # training-status feedback phrase (e.g. "UNPRODUCTIVE_5"), and Garmin's own
+    # acute:chronic workload ratio (cross-checks our EWMA-based ACWR).
     training_status: Mapped[str | None] = mapped_column(String(64))
     recovery_time_min: Mapped[int | None] = mapped_column(Integer)
     acute_load_garmin: Mapped[int | None] = mapped_column(Integer)
     hrv_weekly_avg: Mapped[int | None] = mapped_column(Integer)
+    acwr_garmin: Mapped[float | None] = mapped_column(Float)
 
     # Overnight extras from the sleep payload's top level (outside the DTO):
     # Body Battery recharge, restlessness, and skin-temperature deviation

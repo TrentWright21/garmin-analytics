@@ -445,6 +445,7 @@ def _prompt_payload(
             "training_status": latest.get("training_status"),
             "recovery_time_h": _min_to_hours(latest.get("recovery_time_min")),
             "acute_load": latest.get("acute_load_garmin"),
+            "acwr": latest.get("acwr_garmin"),
             "hrv_weekly_avg": latest.get("hrv_weekly_avg"),
         },
         "sleep": {
@@ -777,6 +778,7 @@ _CURRENT_KEYS = (
     "recovery_time_min",
     "acute_load_garmin",
     "hrv_weekly_avg",
+    "acwr_garmin",
 )
 
 

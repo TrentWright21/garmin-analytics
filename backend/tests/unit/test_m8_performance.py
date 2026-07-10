@@ -69,6 +69,50 @@ def test_estimate_hr_max_prefers_observed_and_configured() -> None:
     acts = pl.DataFrame({"max_hr": [170.0, 185.0, 180.0]})
     assert physiology.estimate_hr_max(acts) == 185.0
     assert physiology.estimate_hr_max(acts, configured=200.0) == 200.0
+
+
+def test_estimate_hr_max_sheds_single_spike_with_enough_data() -> None:
+    # One 210 strap artifact among 200 honest readings must not set the max.
+    acts = pl.DataFrame({"max_hr": [170.0] * 200 + [210.0]})
+    assert physiology.estimate_hr_max(acts) == 170.0
+    assert physiology.estimate_hr_max(acts, configured=188.0) == 188.0
+
+
+def test_daily_training_load_trimp_fallback() -> None:
+    # Garmin's own load wins when present; TRIMP replaces the old min*HR proxy.
+    acts = pl.DataFrame(
+        {
+            "day": [START, START + timedelta(days=1)],
+            "training_load": [100.0, None],
+            "duration_s": [3600.0, 3600.0],
+            "avg_hr": [150.0, 150.0],
+            "max_hr": [180.0, 180.0],
+        }
+    )
+    out = ax.daily_training_load(acts, hr_rest=50.0, hr_max=185.0)
+    rows = {str(r["day"]): r["load"] for r in out.to_dicts()}
+    assert rows[str(START)] == 100.0
+    expected = physiology.trimp(60.0, 150.0, 50.0, 185.0)
+    assert expected is not None
+    assert rows[str(START + timedelta(days=1))] == pytest.approx(expected)
+
+
+def test_acwr_is_ewma_on_the_shared_load_series() -> None:
+    # One pipeline: acute IS the PMC's ATL; chronic is the literature's 28-day
+    # EWMA of the same series (not the PMC's 42-day CTL, which reads high).
+    frame = load_frame([50.0] * 40 + [200.0] * 3)
+    last = ax.acwr(frame).tail(1).to_dicts()[0]
+    pmc = fitness.performance_management(frame).tail(1).to_dicts()[0]
+    assert last["acute"] == pmc["atl"]
+    assert last["acwr"] == pytest.approx(last["acute"] / last["chronic"], abs=0.01)
+    assert last["acwr"] > 1.3  # the 3-day spike registers
+    assert 50.0 < last["chronic"] < last["acute"]  # 28d EWMA sits between
+
+
+def test_acwr_warmup_window_reports_null() -> None:
+    out = ax.acwr(load_frame([80.0] * 20))
+    assert out.head(14)["acwr"].null_count() == 14  # too little history to judge
+    assert out.tail(1).to_dicts()[0]["acwr"] == pytest.approx(1.0, abs=0.05)
     assert physiology.estimate_hr_max(pl.DataFrame()) == physiology.DEFAULT_HR_MAX
 
 

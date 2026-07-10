@@ -54,26 +54,34 @@ def estimate_hr_max(
     daily: pl.DataFrame | None = None,
     configured: float | None = None,
 ) -> float:
-    """Best available HR max: configured value, else the highest ever observed.
+    """Best available HR max: configured value, else a robust observed estimate.
 
-    We do not know the user's age, so we cannot use 220-age. Instead we take the
-    single highest heart rate the watch has ever recorded (in an activity or as a
-    daily max), which for anyone who trains hard is a better estimate than a
-    formula. Falls back to ``DEFAULT_HR_MAX`` only when nothing has been observed.
+    We do not know the user's age, so we cannot use 220-age. Instead we look at
+    the max heart rates the watch has recorded. The single highest reading is
+    NOT trusted — one optical/strap artifact (a 210 spike on an easy jog) would
+    silently inflate every zone and TRIMP downstream — so we take the 99.5th
+    percentile of all observed session/day max values, which rides just under
+    genuine repeated maxima while shedding one-off spikes. Falls back to
+    ``DEFAULT_HR_MAX`` only when nothing has been observed.
 
-    A user-configured true max (from a max-effort test) should always be passed
-    as ``configured`` and takes precedence — that is the accuracy improvement.
+    A user-configured true max (from a max-effort test, ``athlete.hr_max`` in
+    config.yaml) always wins — pass it as ``configured``.
     """
     if configured is not None and configured > 0:
         return float(configured)
 
-    observed: list[float] = []
+    columns: list[pl.Series] = []
     for df, col in ((activities, "max_hr"), (daily, "max_hr")):
         if df is not None and not df.is_empty() and col in df.columns:
-            top = _f(df[col].max())
-            if top is not None and top > 0:
-                observed.append(top)
-    return max(observed) if observed else DEFAULT_HR_MAX
+            values = df[col].cast(pl.Float64, strict=False).drop_nulls()
+            values = values.filter(values > 0)
+            if not values.is_empty():
+                columns.append(values)
+    if not columns:
+        return DEFAULT_HR_MAX
+    observed = pl.concat(columns)
+    top = _f(observed.quantile(0.995, interpolation="nearest"))
+    return top if top is not None else DEFAULT_HR_MAX
 
 
 def hr_zone(avg_hr: float, hr_max: float) -> int:

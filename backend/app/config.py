@@ -76,6 +76,20 @@ class LocationConfig(BaseModel):
     longitude: float = Field(default=-86.9353, ge=-180.0, le=180.0)
 
 
+class AthleteConfig(BaseModel):
+    """Physiological constants that sharpen HR-based analytics.
+
+    Both optional. ``hr_max`` from a real max-effort test beats any estimate
+    (otherwise the 99.5th percentile of observed maxes is used); ``hr_rest`` is
+    a true resting HR for TRIMP's heart-rate-reserve math (otherwise a
+    conservative population default applies to the rare sessions Garmin didn't
+    attach a training load to).
+    """
+
+    hr_max: int | None = Field(default=None, ge=120, le=230)
+    hr_rest: int | None = Field(default=None, ge=25, le=100)
+
+
 class EventConfig(BaseModel):
     """A goal event to count down to. Deliberately generic — a summit hike, a
     marathon, a 5K, or anything with a date all fit.
@@ -102,6 +116,7 @@ class AppConfig(BaseModel):
     location: LocationConfig = LocationConfig()
     notify: NotifyConfig = NotifyConfig()
     goal: GoalConfig = GoalConfig()
+    athlete: AthleteConfig = AthleteConfig()
     # Extra browser origins allowed to call the API cross-origin (prod). Empty is
     # the safe default for a same-origin deploy (dashboard served by FastAPI). The
     # Vite dev server origin is always allowed in dev; see main.py.

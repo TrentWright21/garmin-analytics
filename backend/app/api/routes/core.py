@@ -54,7 +54,7 @@ def weekly(days: int = Query(default=365, ge=14, le=3650)) -> list[dict[str, Any
 @router.get("/analytics/training-load")
 def training_load(days: int = Query(default=180, ge=28, le=3650)) -> dict[str, Any]:
     start, end = _range(days)
-    load = ax.daily_training_load(ax.load_activities(start, end))
+    load = ax.load_training_load(start, end)
     # monotony is a trailing-7d daily series; the chart wants weekly bars, so
     # sample one row every 7 days, anchored to the most recent day.
     mono = ax.monotony(load)

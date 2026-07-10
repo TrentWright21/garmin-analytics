@@ -78,6 +78,10 @@ def training_status_payload() -> dict[str, Any]:
                     "trainingStatus": 2,
                     "trainingStatusFeedbackPhrase": "UNPRODUCTIVE_5",
                     "fitnessTrend": 1,
+                    "acuteTrainingLoadDTO": {
+                        "acwrPercent": 52,
+                        "dailyAcuteChronicWorkloadRatio": 1.2,
+                    },
                 }
             }
         }
@@ -197,6 +201,7 @@ class TestSyncPipeline:
             assert dm.acute_load_garmin == 220
             assert dm.hrv_weekly_avg == 76
             assert dm.training_status == "UNPRODUCTIVE_5"
+            assert dm.acwr_garmin == 1.2
             assert dm.body_battery_change == 67
             assert dm.restless_moments == 40
             assert dm.skin_temp_dev_c == -0.3

@@ -173,17 +173,27 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
   backfill) and under the legacy `readiness_score`. Verified on the real dev
   DB (263 scored days: median z -0.05, 200 normal / 46 below / 10 suppressed
   / 7 above, no explosions). 193 tests.
-- [ ] **One load pipeline**: `daily_training_load` falls back to
-  `physiology.trimp()` (needs RHR + HR max) instead of its ad-hoc `min*HR/100`
-  proxy; ACWR becomes ATL/CTL from `fitness.performance_management` (uncoupled
-  EWMA); delete `engine.acwr`'s separate rolling math (port consumers). Cross-check
-  against Garmin's own `acwrPercent` once Phase 1b lands.
+- [x] **One load pipeline** — DONE 2026-07-09. `daily_training_load` falls back
+  to `physiology.trimp()` (82 of 159 real activities — the pre-Dec-2025 watch
+  attached no Garmin load — now get physiological TRIMP instead of `min*HR/100`).
+  `engine.acwr` rewritten: EWMA over the same dense daily series as the PMC
+  (acute IS ATL), chronic = **28-day** EWMA (`ACWR_CHRONIC_TAU`) — NOT the
+  PMC's 42d CTL: cross-checking against Garmin's own
+  `dailyAcuteChronicWorkloadRatio` (newly normalized as `acwr_garmin`, shown in
+  LOAD_SPIKE evidence + the brief's `garmin_view`) proved a 42d denominator
+  reads ~0.3 high in any build phase and fired a spurious red flag (1.57-red vs
+  Garmin 1.2-optimal; 28d gives 1.46-yellow — agreeing). First 14 days null
+  (warmup). New loader helpers `training_load_for`/`load_training_load` apply
+  athlete config; all 8 call sites ported (routes/coach/briefing).
 - [ ] **Sleep debt into readiness**: blend last-night score with 7d debt vs
   personal need (sleep_coach already computes debt) — e.g. 60/40.
-- [ ] **Robust HR max + athlete config**: `estimate_hr_max` -> 99.5th percentile of
-  activity max HRs (single spikes are strap artifacts); add `athlete:` block to
-  config.yaml (`hr_max`, `hr_rest`) — `physiology.estimate_hr_max(configured=...)`
-  already accepts it, nothing passes it today.
+- [x] **Robust HR max + athlete config** — DONE 2026-07-09. `estimate_hr_max`
+  now takes the 99.5th percentile (nearest) of all observed activity/daily max
+  HRs — one strap artifact can no longer set every zone (needs ~100+ samples to
+  bite; Trent has ~520). `AthleteConfig` (`hr_max`, `hr_rest`) added to
+  config.py + a commented `athlete:` block in config.yaml; the configured max
+  now actually flows into `_hr_max()` in performance.py + coach.py and into the
+  TRIMP fallback via `training_load_for`.
 - [ ] **Zone-based intensity distribution**: `fitness.intensity_distribution` sums
   real `zone_*_s` (Phase 1b) instead of bucketing whole sessions by average HR;
   report weekly Z1-2 / Z3 / Z4-5 vs the 80/20 target.
@@ -193,9 +203,10 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
 - [ ] **Goal-aware fallback templates**: "climb" focus should prescribe long-vert /
   weighted-pack hikes on quality days, not tempo runs (`_fallback_core` maps climb
   -> endurance -> tempo today).
-- [ ] **Honest copy**: soften LOAD_SPIKE's "high-injury-risk zone" claim (ACWR causal
-  claims are contested — Impellizzeri et al.); label the risk panel "heuristics,
-  not diagnoses".
+- [x] **Honest copy** — DONE 2026-07-09. LOAD_SPIKE red now reads "a heuristic
+  caution, not an injury prediction" (Impellizzeri noted in code comments); the
+  Overview risk panel subtitle says "cautions, not diagnoses"; the coach tool's
+  reference block matches.
 - [ ] **Retire the legacy readiness**: `engine.readiness_score` (equal-weight, still
   served at `/api/analytics/readiness`) -> port consumers to readiness v2; show
   Garmin's training_readiness alongside as a labeled cross-check.

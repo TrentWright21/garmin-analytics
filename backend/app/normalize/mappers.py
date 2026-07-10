@@ -40,20 +40,19 @@ def _ts(ms: Any) -> datetime | None:
     return datetime.fromtimestamp(f / 1000, tz=UTC).replace(tzinfo=None)
 
 
-def _training_status_phrase(payload: Any) -> str | None:
-    """Garmin's training-status feedback phrase (e.g. ``UNPRODUCTIVE_5``).
+def _first_device_status(payload: Any) -> dict[str, Any]:
+    """The first recording device's entry in a ``training_status`` payload.
 
-    Nested per recording device: ``mostRecentTrainingStatus.latestTrainingStatusData
-    .<deviceId>.trainingStatusFeedbackPhrase`` — take the first device's entry.
+    Nested per device id: ``mostRecentTrainingStatus.latestTrainingStatusData
+    .<deviceId>.{trainingStatusFeedbackPhrase, acuteTrainingLoadDTO, ...}``.
     """
     if not isinstance(payload, dict):
-        return None
+        return {}
     latest = (payload.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData") or {}
     for device_data in latest.values():
         if isinstance(device_data, dict):
-            phrase = device_data.get("trainingStatusFeedbackPhrase")
-            return str(phrase) if phrase else None
-    return None
+            return device_data
+    return {}
 
 
 def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
@@ -109,7 +108,11 @@ def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
         m.hrv_weekly_avg = _int(first.get("hrvWeeklyAverage"))
 
     if ts_payload := raw.get("training_status"):
-        m.training_status = _training_status_phrase(ts_payload)
+        device = _first_device_status(ts_payload)
+        phrase = device.get("trainingStatusFeedbackPhrase")
+        m.training_status = str(phrase) if phrase else None
+        acute_dto = device.get("acuteTrainingLoadDTO") or {}
+        m.acwr_garmin = _num(acute_dto.get("dailyAcuteChronicWorkloadRatio"))
 
     if mm := raw.get("max_metrics"):
         first = mm[0] if isinstance(mm, list) and mm else mm if isinstance(mm, dict) else {}

@@ -83,7 +83,7 @@ def build_briefing() -> dict[str, Any]:
 
     daily = ax.load_daily(*_range(90))
     acts = ax.load_activities(*_range(365))
-    load = ax.daily_training_load(acts)
+    load = ax.training_load_for(acts)
 
     fit = fitness.fitness_summary(load)
     tsb = _f(fit.get("form_tsb")) if fit.get("available") else None
