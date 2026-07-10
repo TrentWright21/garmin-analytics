@@ -36,11 +36,6 @@ export interface ActivityRow {
   vo2max: number | null;
 }
 
-export interface Readiness {
-  score: number | null;
-  components: Record<string, number>;
-}
-
 export interface MetricCard {
   key: string;
   label: string;
@@ -219,6 +214,8 @@ export interface ReadinessV2 {
   drivers?: { key: string; label: string; value: number; verdict: string }[];
   load_penalty?: number;
   load_note?: string | null;
+  sleep_debt_7d_h?: number | null;
+  garmin_training_readiness?: number | null;
   recommendation?: string;
 }
 
@@ -338,6 +335,17 @@ export interface EventCountdown {
   is_past?: boolean;
 }
 
+export interface RunWindow {
+  available: boolean;
+  day?: string;
+  start_hour?: number;
+  end_hour?: number;
+  label?: string;
+  avg_temp_f?: number;
+  avg_dew_point_f?: number;
+  comfort_sum?: number;
+}
+
 export interface Briefing {
   date: string;
   readiness: ReadinessV2;
@@ -347,7 +355,27 @@ export interface Briefing {
   recovery: RecoveryTimer;
   weather: WeatherToday;
   heat: HeatAdvisory;
+  run_window: RunWindow;
   event: EventCountdown;
+}
+
+/** The day's recommended workout — same engine as the Telegram morning brief,
+ * cached server-side per day so the page and the message never disagree. */
+export interface TodayWorkout {
+  date: string;
+  workout: {
+    workout_type: string;
+    intensity: string;
+    duration_min: number | null;
+    instructions: string;
+    why: string;
+    watch_out: string;
+    summary: string;
+    insight: string;
+    watch_tomorrow: string;
+    confidence: string;
+    ai_generated: boolean;
+  };
 }
 
 export interface BodyBatteryReport {
@@ -415,8 +443,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Short-TTL in-memory GET cache. Its job is to make remounts cheap — switching
+// Desktop/Mobile layout remounts every page, and without this each toggle would
+// refetch the whole dashboard. 60s is short enough that fresh sync data still
+// appears promptly; a manual sync busts it explicitly.
+const GET_TTL_MS = 60_000;
+const getCache = new Map<string, { at: number; promise: Promise<unknown> }>();
+
+export function bustGetCache(): void {
+  getCache.clear();
+}
+
 async function get<T>(path: string): Promise<T> {
-  return request<T>(path);
+  const hit = getCache.get(path);
+  if (hit && Date.now() - hit.at < GET_TTL_MS) {
+    return hit.promise as Promise<T>;
+  }
+  const promise = request<T>(path).catch((err) => {
+    getCache.delete(path); // never cache failures
+    throw err;
+  });
+  getCache.set(path, { at: Date.now(), promise });
+  return promise;
 }
 
 export const authApi = {
@@ -434,13 +482,15 @@ export const authApi = {
     const { token } = (await res.json()) as { token: string };
     setToken(token);
   },
-  logout: () => clearToken(),
+  logout: () => {
+    clearToken();
+    bustGetCache(); // cached responses belong to the authenticated session
+  },
 };
 
 export const api = {
   daily: (days = 120) => get<DailyRow[]>(`/metrics/daily?days=${days}`),
   activities: (days = 120) => get<ActivityRow[]>(`/activities?days=${days}`),
-  readiness: () => get<Readiness>(`/analytics/readiness`),
   insights: () => get<{ insights: string[] }>(`/insights`),
   trainingLoad: (days = 180) =>
     get<{ acwr: Record<string, number>[]; monotony: Record<string, number>[] }>(
@@ -455,6 +505,7 @@ export const api = {
   readinessV2: () => get<ReadinessV2>(`/analytics/readiness-v2`),
   risk: () => get<RiskReport>(`/analytics/risk`),
   briefing: () => get<Briefing>(`/briefing`),
+  todayWorkout: () => get<TodayWorkout>(`/briefing/workout`),
   event: () => get<EventCountdown>(`/event`),
   bodyBattery: (days = 7) => get<BodyBatteryReport>(`/metrics/body-battery?days=${days}`),
   sessions: (days = 90) => get<SessionListItem[]>(`/sessions?days=${days}`),
@@ -466,8 +517,10 @@ export const api = {
     if (weeklyMiles != null) q.set("weekly_miles", String(weeklyMiles));
     return get<PacePlan>(`/coach/pace?${q.toString()}`);
   },
-  sync: (days = 2) =>
-    request<{ status: string; days: string }>(`/sync?days=${days}`, { method: "POST" }),
+  sync: (days = 2) => {
+    bustGetCache(); // fresh data incoming — don't serve stale cached GETs
+    return request<{ status: string; days: string }>(`/sync?days=${days}`, { method: "POST" });
+  },
 
   coachStatus: () => get<{ configured: boolean }>(`/coach/status`),
   conversations: () => get<{ conversations: ConversationSummary[] }>(`/coach/conversations`),

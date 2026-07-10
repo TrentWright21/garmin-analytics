@@ -164,10 +164,58 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   (hr_max/hr_rest) + commented `athlete:` yaml block, wired via new engine
   loaders `training_load_for`/`load_training_load` (all call sites ported);
   LOAD_SPIKE copy + Overview risk-panel subtitle softened to "cautions, not
-  diagnoses". 197 tests, frontend builds. **NEXT UP:** droplet 365-day backfill
-  (ops item), then Phase 2 remaining: sleep debt into readiness, zone-based
-  intensity distribution, best-run-window, goal-aware fallback templates,
-  retire legacy readiness — see IMPROVEMENT_PLAN.md.
+  diagnoses". 197 tests, frontend builds.
+- **2026-07-09 (same day): Phase 2 items 3+5+6+7 — sleep debt in readiness,
+  zone-based intensity, best-run-window, climb templates — built, awaiting
+  Trent's commit.** Readiness sleep component = 60% last-night score + 40%
+  7-night-debt grade vs personal need (`sleep_debt_7d_h` in output; real data:
+  7.5 h debt drags Trent's component 67->50); `intensity_distribution` uses
+  real `zone_1..5_s` (method/zone_minutes fields; real verdict now
+  "grey-zone-heavy", 39% Z3); `briefing.best_run_window` (temp°F+dew°F comfort
+  sum, coolest 2h block 05-21) -> `/api/briefing.run_window` + Telegram line +
+  AI payload; climb/hike/summit goals get a `long_hike` fallback quality day
+  (Trent's focus is `endurance` — switch `goal.focus: climb` to activate).
+- **2026-07-09 (same day): Phase 3a — iPhone/mobile layout mode SHIPPED to the
+  working tree (awaiting Trent's commit + on-device check).** The app now has
+  two presentation modes plus Auto, with the desktop dashboard untouched:
+  * **Layout-mode architecture** (`frontend/src/lib/layoutMode.tsx`):
+    `LayoutModeProvider`/`useLayoutMode()` hold `mode` (auto|desktop|mobile,
+    persisted at localStorage `waypoint-layout-mode`); one
+    `matchMedia("(max-width: 767px)")` listener decides compactness;
+    `effective = mode==auto ? (compact?mobile:desktop) : mode` and is stamped
+    on `<html data-layout>` so theme.css scopes mobile rules
+    (`:root[data-layout="mobile"] ...`) — manual Mobile works on a monitor and
+    manual Desktop on a phone. Only the effective shell renders. Toggle UI
+    (`components/LayoutToggle.tsx`) lives in the desktop sidebar footer and the
+    mobile More screen.
+  * **Mobile shell** (App.tsx `MobileShell`): sticky blurred header, 5-tab
+    bottom nav (Today/Training/Activity/Coach/More, 48px targets,
+    `env(safe-area-inset-bottom)`); every route stays reachable (deep pages
+    under More). **Today screen** (`pages/mobile/Today.tsx`) answers the
+    morning questions in order: readiness hero -> Today's plan -> risk alerts
+    -> vitals -> conditions + best run window -> recovery -> event.
+  * **`GET /api/briefing/workout`**: the day's workout from the same engine as
+    the Telegram brief, cached per day at `data/todays_workout.json`;
+    `compose_morning_message` force-writes the cache at send time so page and
+    push can never disagree. One AI call/day max.
+  * iOS fixes: `color-scheme` was `dark` on a light theme (dark iOS form
+    controls) -> `light`; `viewport-fit=cover`; 16px mobile inputs (no focus
+    zoom); toast above the home indicator; modal -> bottom sheet on mobile;
+    60s in-memory GET cache in api.ts (mode toggle doesn't refetch the world).
+  * Gates: `tsc`+`vite build` clean, ruff + mypy --strict clean, 204 tests.
+    NOT yet done: dedicated mobile passes for SleepCoach/PaceCoach charts and
+    tables, real-iPhone verification, frontend test runner — see the honest
+    remaining-work list in IMPROVEMENT_PLAN.md Phase 3a.
+- **2026-07-09 (same day): Phase 2 COMPLETE — legacy readiness retired.**
+  Deleted `engine.readiness_score`, `/api/analytics/readiness`, the coach's
+  redundant `get_readiness` tool, and the frontend's unused `Readiness`
+  type/client. `daily_readiness` output gains `garmin_training_readiness`
+  (labeled cross-check, never an input); Overview card renders it. Real data:
+  ours 73 green vs Garmin 50 — the disagreement is now visible instead of
+  hidden. 202 tests, ruff + mypy --strict clean, frontend builds. All of this
+  Phase 2 work is UNCOMMITTED, awaiting Trent's commit + droplet update.
+  **NEXT UP:** droplet 365-day backfill (ops), then Phase 3 UI restructure —
+  see IMPROVEMENT_PLAN.md.
 - **Backfill status (corrected 2026-07-08):** the DEV machine DB already has
   **367 days** of daily data (290 d HRV, 119 activity days) — earlier "only 30
   days" notes were stale. Only the **droplet's** separate DB is still ~30 days;

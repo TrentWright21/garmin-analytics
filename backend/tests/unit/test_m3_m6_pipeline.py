@@ -325,11 +325,6 @@ class TestAnalytics:
         out = ax.monotony(load).drop_nulls("monotony")
         assert out["monotony"].max() > 2.0
 
-    def test_readiness_score_has_components(self) -> None:
-        result = ax.readiness_score(synthetic_daily())
-        assert result["score"] is not None and 0 <= result["score"] <= 100
-        assert "sleep" in result["components"]
-
     def test_insights_finds_rhr_improvement(self) -> None:
         findings = ax.generate_insights(synthetic_daily(), pl.DataFrame())
         assert any("resting HR" in f for f in findings)
@@ -342,12 +337,28 @@ class TestAnalytics:
 
 
 class TestApi:
-    def test_routes_respond(self) -> None:
+    def test_routes_respond(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         SyncEngine(FakeCollector(), pause_s=0).sync_range(DAY, DAY)
+        from app.config import get_settings
         from app.main import app
+
+        # Workout endpoint: keep it offline (fallback path) and off the real cache.
+        monkeypatch.setattr("app.ai.morning_brief._WORKOUT_CACHE", tmp_path / "workout.json")
+        get_settings().anthropic_api_key = None
 
         with TestClient(app) as client:
             assert client.get("/api/metrics/daily?days=3650").status_code == 200
-            assert client.get("/api/analytics/readiness").status_code == 200
+            # readiness v2 is THE readiness endpoint (legacy /analytics/readiness retired)
+            assert client.get("/api/analytics/readiness-v2").status_code == 200
+            paths = {getattr(r, "path", "") for r in app.router.routes}
+            assert "/api/analytics/readiness" not in paths
             body = client.get("/api/insights?days=3650").json()
             assert "insights" in body
+
+            # The day's workout: computed once, then served from the day cache.
+            first = client.get("/api/briefing/workout")
+            assert first.status_code == 200
+            plan = first.json()
+            assert plan["workout"]["workout_type"]
+            assert plan["workout"]["intensity"] in ("rest", "recovery", "easy", "moderate", "hard")
+            assert client.get("/api/briefing/workout").json() == plan

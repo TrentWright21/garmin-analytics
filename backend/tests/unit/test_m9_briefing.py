@@ -248,6 +248,37 @@ def test_recovery_timer_falls_back_to_heuristic_without_garmin() -> None:
     assert out["estimated_recovery_hours"] == 48
 
 
+# -- best run window ----------------------------------------------------------
+
+
+def _forecast_payload(day: str) -> dict:
+    # Coolest plateau at 06:00-08:00, warming through the afternoon.
+    hours = list(range(24))
+    temps = [24.0 if h in (6, 7) else 26.0 + abs(h - 6) for h in hours]
+    return {
+        "hourly": {
+            "time": [f"{day}T{h:02d}:00" for h in hours],
+            "temperature_2m": temps,
+            "dew_point_2m": [20.0] * 24,
+        }
+    }
+
+
+def test_best_run_window_picks_the_coolest_block() -> None:
+    out = brief.best_run_window(_forecast_payload(str(TODAY)), TODAY)
+    assert out["available"] is True
+    assert out["start_hour"] == 6
+    assert out["end_hour"] == 8
+    assert out["label"] == "6 AM-8 AM"
+    assert out["avg_dew_point_f"] == pytest.approx(68.0, abs=0.1)
+
+
+def test_best_run_window_unavailable_without_matching_day() -> None:
+    assert brief.best_run_window(None, TODAY) == {"available": False}
+    wrong_day = _forecast_payload("1999-01-01")
+    assert brief.best_run_window(wrong_day, TODAY) == {"available": False}
+
+
 # -- heat advisory -----------------------------------------------------------
 
 

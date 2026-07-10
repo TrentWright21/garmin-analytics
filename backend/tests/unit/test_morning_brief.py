@@ -9,6 +9,7 @@ configured goal, the intensity clamp, and a graceful fallback on a bad response.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +24,7 @@ from app.ai.morning_brief import (
     fallback_workout,
     intensity_ceiling,
 )
-from app.config import GoalConfig, Settings
+from app.config import AppConfig, GoalConfig, Settings
 from app.notify.message import format_morning_message
 
 TODAY = date(2026, 7, 8)
@@ -177,6 +178,13 @@ def test_fallback_avoids_back_to_back_hard() -> None:
 def test_fallback_no_goal_still_returns_valid_workout() -> None:
     rec = fallback_workout("hard", GoalConfig(), [], TODAY)  # default focus
     assert rec.workout_type and rec.instructions and rec.why
+
+
+def test_fallback_climb_goal_prescribes_vert_not_tempo() -> None:
+    rec = fallback_workout("hard", GoalConfig(focus="climb"), [], TODAY)
+    assert rec.workout_type == "long_hike"
+    assert rec.intensity == "moderate"
+    assert "vert" in rec.instructions.lower() or "climbing" in rec.instructions.lower()
 
 
 # -- build_workout: fallback vs AI, and the clamp -----------------------------
@@ -559,7 +567,58 @@ def test_message_mentions_training_status_only_when_not_productive() -> None:
     assert "Garmin status" not in text
 
 
+def test_workout_cache_roundtrip_and_stale_date_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ai import morning_brief as mb
+
+    monkeypatch.setattr(mb, "_WORKOUT_CACHE", tmp_path / "workout.json")
+    rec = fallback_workout("easy", GoalConfig(focus="endurance"), [], TODAY)
+    mb.save_workout_cache(rec, TODAY)
+
+    cached = mb.load_cached_workout(TODAY)
+    assert cached is not None
+    assert cached["workout"]["workout_type"] == rec.workout_type
+    assert cached["workout"]["instructions"] == rec.instructions
+    # Yesterday's plan is worse than none: a different day must miss.
+    assert mb.load_cached_workout(TODAY + timedelta(days=1)) is None
+
+
+def test_todays_workout_serves_the_cache_without_recompute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ai import morning_brief as mb
+
+    monkeypatch.setattr(mb, "_WORKOUT_CACHE", tmp_path / "workout.json")
+    seeded = fallback_workout("easy", GoalConfig(), [], date.today())
+    mb.save_workout_cache(seeded, date.today())
+    # A cache hit must not touch the DB at all (gather_context would blow up).
+    monkeypatch.setattr(
+        mb, "gather_context", lambda: (_ for _ in ()).throw(AssertionError("recomputed"))
+    )
+    out = mb.todays_workout(_no_key_settings(), AppConfig())
+    assert out["date"] == str(date.today())
+    assert out["workout"]["workout_type"] == seeded.workout_type
+
+
 def test_message_shows_overnight_body_battery_recharge() -> None:
     latest = {"body_battery_high": 84, "body_battery_change": 67}
     _, text = format_morning_message(GOOD, GoalConfig(), _workout(), latest, [], today=TODAY)
     assert "Body Battery 84 (+67 overnight)" in text
+
+
+def test_message_and_payload_carry_best_run_window() -> None:
+    brief = {
+        **GOOD,
+        "weather": {"available": True, "temp_high_f": 92.0},
+        "run_window": {
+            "available": True,
+            "label": "6 AM-8 AM",
+            "avg_temp_f": 75.2,
+            "avg_dew_point_f": 66.0,
+        },
+    }
+    _, text = format_morning_message(brief, GoalConfig(), _workout(), {}, [], today=TODAY)
+    assert "Best run window: 6 AM-8 AM (dew 66°F)" in text
+    payload = _prompt_payload(GoalConfig(), "hard", "ok", brief, [], {})
+    assert payload["best_run_window"]["label"] == "6 AM-8 AM"

@@ -1078,3 +1078,385 @@ table.tbl th.num {
     padding: 16px;
   }
 }
+
+/* ============================================================
+   Layout modes. The provider stamps <html data-layout="mobile|desktop">
+   from (persisted mode + viewport), so everything below is driven by the
+   EFFECTIVE layout, not raw media queries — manual Mobile on a monitor and
+   manual Desktop on a phone both behave. Desktop rules above are untouched.
+   ============================================================ */
+
+:root {
+  /* iPhone safe areas (0 elsewhere). Requires viewport-fit=cover. */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+}
+
+html,
+body {
+  /* never allow accidental horizontal page scroll */
+  overflow-x: clip;
+}
+
+/* ---- segmented control (layout toggle; generic, both layouts) ---- */
+.seg {
+  display: inline-flex;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+  width: 100%;
+}
+.seg-btn {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 7px 10px;
+  min-height: 32px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.seg-btn.on {
+  background: var(--surface-1);
+  color: var(--ink);
+  font-weight: 650;
+  box-shadow: var(--shadow);
+}
+
+/* visible focus for keyboard users, everywhere */
+.btn:focus-visible,
+.chip:focus-visible,
+.seg-btn:focus-visible,
+.nav-item:focus-visible,
+.m-tab:focus-visible,
+.m-row:focus-visible,
+.conv-item:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- mobile shell ---- */
+.m-app {
+  min-height: 100vh;
+  min-height: 100dvh; /* iOS URL-bar-proof where supported */
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+}
+.m-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + var(--sat)) 16px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.m-main {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 14px calc(88px + var(--sab));
+}
+.m-tabbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.94);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+  padding: 6px 8px calc(6px + var(--sab));
+}
+.m-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 48px; /* comfortable thumb target */
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.m-tab .ico {
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+.m-tab.active {
+  color: var(--brand);
+  background: var(--brand-weak);
+}
+
+/* ---- mobile-scoped shared-component adjustments ---- */
+:root[data-layout="mobile"] .toast {
+  left: 14px;
+  right: 14px;
+  bottom: calc(72px + var(--sab)); /* above the tab bar, off the home indicator */
+}
+:root[data-layout="mobile"] input,
+:root[data-layout="mobile"] select,
+:root[data-layout="mobile"] textarea {
+  font-size: 16px; /* <16px makes iOS Safari zoom on focus */
+}
+:root[data-layout="mobile"] .grid.cols-2,
+:root[data-layout="mobile"] .grid.cols-3,
+:root[data-layout="mobile"] .grid.cols-4 {
+  grid-template-columns: 1fr !important; /* beats the pages' inline columns */
+}
+:root[data-layout="mobile"] .topbar {
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+:root[data-layout="mobile"] .topbar h1 {
+  font-size: 19px;
+}
+:root[data-layout="mobile"] .card {
+  padding: 14px;
+  border-radius: 12px;
+}
+:root[data-layout="mobile"] .chip {
+  padding: 9px 14px; /* touch target */
+}
+:root[data-layout="mobile"] .chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+:root[data-layout="mobile"] .chips .chip {
+  flex-shrink: 0;
+}
+:root[data-layout="mobile"] table.tbl th,
+:root[data-layout="mobile"] table.tbl td {
+  padding: 12px 10px;
+}
+
+/* modal becomes a bottom sheet on mobile */
+:root[data-layout="mobile"] .modal-scrim {
+  padding: 0;
+  place-items: end center;
+  overflow-y: hidden;
+}
+:root[data-layout="mobile"] .modal {
+  max-width: none;
+  border-radius: 16px 16px 0 0;
+  border-bottom: 0;
+  max-height: 88vh;
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding-bottom: var(--sab);
+  animation: m-sheet-up 0.2s ease-out;
+}
+@keyframes m-sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+:root[data-layout="mobile"] .modal-head {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  z-index: 1;
+}
+
+/* coach chat sized for a phone */
+:root[data-layout="mobile"] .coach-layout {
+  grid-template-columns: 1fr;
+  height: auto;
+  gap: 12px;
+}
+:root[data-layout="mobile"] .coach-convs,
+:root[data-layout="mobile"] .coach-conv-list {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+:root[data-layout="mobile"] .conv-item {
+  flex-shrink: 0;
+  max-width: 220px;
+}
+:root[data-layout="mobile"] .coach-new {
+  width: auto;
+  flex-shrink: 0;
+}
+:root[data-layout="mobile"] .coach-panel {
+  height: calc(100vh - 260px);
+  height: calc(100dvh - 260px);
+  min-height: 320px;
+}
+
+/* ---- mobile building blocks (Today / More) ---- */
+.m-gap-top {
+  margin-top: 12px;
+}
+.m-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.m-vitals {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.m-vital {
+  padding: 12px 14px;
+}
+.m-allclear {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.m-runwindow {
+  margin-top: 10px;
+  padding: 9px 12px;
+  background: var(--brand-weak);
+  border: 1px solid var(--brand-weak-border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.m-event {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.m-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px; /* touch row */
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.m-row:last-child {
+  border-bottom: 0;
+}
+.m-row-ico {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--brand-weak);
+  color: var(--brand);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.m-row-chevron {
+  color: var(--baseline);
+  font-size: 20px;
+}
+.m-btn-full {
+  width: 100%;
+  justify-content: center;
+  min-height: 44px;
+}
+
+/* progressive disclosure */
+.disclose {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+}
+.disclose summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  list-style: none;
+}
+.disclose summary::-webkit-details-marker {
+  display: none;
+}
+.disclose summary::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--baseline);
+  font-size: 18px;
+  transform: rotate(90deg);
+  transition: transform 0.15s;
+}
+.disclose[open] summary::after {
+  transform: rotate(-90deg);
+}
+.disclose > *:not(summary) {
+  padding-bottom: 12px;
+}
+
+/* activity list cards (mobile replacement for the wide table) */
+.m-act {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  margin-bottom: 10px;
+  font-family: var(--font);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.m-act:active {
+  background: var(--surface-2);
+}
+.m-act-title {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.m-act-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}

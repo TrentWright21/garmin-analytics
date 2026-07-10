@@ -218,9 +218,12 @@ def _weather_line(brief: dict[str, Any]) -> str | None:
     if weather.get("dew_point_f") is not None:
         parts.append(f"dew {float(weather['dew_point_f']):.0f}°F")
     line = "Weather: " + " · ".join(parts)
+    window = brief.get("run_window") or {}
+    if window.get("available") and window.get("label"):
+        line += f"\nBest run window: {window['label']} (dew {window['avg_dew_point_f']:.0f}°F)"
     heat = brief.get("heat") or {}
     if heat.get("available") and heat.get("severity") in ("high", "extreme") and heat.get("advice"):
-        line += f" · 🥵 {heat['advice']}"
+        line += f"\n🥵 {heat['advice']}"
     return line
 
 
@@ -350,11 +353,16 @@ def format_morning_message(
 
 
 def compose_morning_message(settings: Settings, cfg: AppConfig) -> tuple[str, str]:
-    """Gather today's data, get the (AI or fallback) workout, and format the brief."""
-    from app.ai.morning_brief import build_workout, gather_context
+    """Gather today's data, get the (AI or fallback) workout, and format the brief.
+
+    The workout is also written to the per-day cache so the dashboard's Today
+    screen shows exactly what the message said (page and push never disagree).
+    """
+    from app.ai.morning_brief import build_workout, gather_context, save_workout_cache
 
     brief, recent, latest = gather_context()
     workout = build_workout(settings, cfg.goal, brief, recent, latest)
+    save_workout_cache(workout, date.today())
     return format_morning_message(brief, cfg.goal, workout, latest, recent)
 
 

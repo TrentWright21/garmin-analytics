@@ -208,8 +208,8 @@ def monotony(load_by_day: pl.DataFrame) -> pl.DataFrame:
 def hrv_baseline_deviation(daily: pl.DataFrame) -> pl.DataFrame:
     """7-day HRV vs personal 60-day baseline, in percent (LEGACY method).
 
-    Kept as the fallback for thin history (``hrv_swc`` needs ~4 weeks) and for
-    the legacy ``readiness_score``. New consumers should prefer ``hrv_swc``,
+    Kept only as the fallback for thin history (``hrv_swc`` needs ~4 weeks and
+    a baseline with real variance). New consumers should prefer ``hrv_swc``,
     which fixes this method's two flaws: raw-ms math on a log-normal quantity,
     and a baseline that includes the very dip it is trying to detect.
     """
@@ -288,38 +288,6 @@ def hrv_swc(daily: pl.DataFrame) -> pl.DataFrame:
         )
     )
     return df.select("day", "hrv_z", "hrv_dev_pct", "hrv_band")
-
-
-# -- readiness ------------------------------------------------------------------
-
-
-def readiness_score(daily: pl.DataFrame) -> dict[str, Any]:
-    """Composite 0-100 readiness from the latest day's signals.
-
-    Not Garmin's black box: every component and its contribution is returned,
-    so the dashboard can show WHY the score is what it is.
-    """
-    if daily.is_empty():
-        return {"score": None, "components": {}}
-    dev = hrv_baseline_deviation(daily)
-    last = daily.sort("day").tail(1).to_dicts()[0]
-    last_dev_rows = dev.tail(1).to_dicts() if not dev.is_empty() else [{}]
-    hrv_dev = last_dev_rows[0].get("hrv_dev_pct")
-
-    components: dict[str, float] = {}
-    if hrv_dev is not None:
-        components["hrv_vs_baseline"] = max(0.0, min(100.0, 70 + float(hrv_dev) * 3))
-    if (ss := last.get("sleep_score")) is not None:
-        components["sleep"] = float(ss)
-    if (bb := last.get("body_battery_high")) is not None:
-        components["body_battery"] = float(bb)
-    if (stress := last.get("avg_stress")) is not None:
-        components["stress"] = max(0.0, 100.0 - float(stress))
-
-    if not components:
-        return {"score": None, "components": {}}
-    score = round(sum(components.values()) / len(components))
-    return {"score": score, "components": {k: round(v) for k, v in components.items()}}
 
 
 # -- insights -----------------------------------------------------------------

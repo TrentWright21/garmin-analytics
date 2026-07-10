@@ -112,9 +112,9 @@ class TestToolWrappers:
         assert out["reference"]["acwr_sweet_spot"] == "0.8-1.3"
         assert len(out["acwr_last_14_days"]) > 0
 
-    def test_readiness_has_components(self) -> None:
+    def test_readiness_detail_has_components(self) -> None:
         seed_metrics(60)
-        out = json.loads(coach.get_readiness())
+        out = json.loads(coach.get_readiness_detail())
         assert out["score"] is not None
         assert "sleep" in out["components"]
 

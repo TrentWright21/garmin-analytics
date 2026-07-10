@@ -249,6 +249,90 @@ def heat_advisory(
     }
 
 
+# -- best run window ------------------------------------------------------------
+
+# Candidate start hours for a run (local). Blocks must fit inside this span —
+# nobody is being sent out at 2am for marginally better dew point.
+_RUN_EARLIEST_H = 5
+_RUN_LATEST_H = 21
+
+
+def _hour_label(hour: int) -> str:
+    if hour == 0:
+        return "12 AM"
+    if hour < 12:
+        return f"{hour} AM"
+    if hour == 12:
+        return "12 PM"
+    return f"{hour - 12} PM"
+
+
+def best_run_window(
+    forecast: dict[str, Any] | None, day: date, block_hours: int = 2
+) -> dict[str, Any]:
+    """The coolest ``block_hours`` window for a run on ``day``. Pure.
+
+    Scores each forecast hour with the runner's comfort sum — temperature °F +
+    dew point °F (the classic pace-adjustment index; dew point is the real
+    heat-stress signal) — and returns the daytime block (05:00-21:00) with the
+    lowest average. ``forecast`` is the verbatim Open-Meteo payload already
+    collected by the daily sync (hourly time/temperature_2m/dew_point_2m in
+    local time); missing/short data degrades to ``{"available": False}``.
+    """
+    hourly = (forecast or {}).get("hourly") or {}
+    times = hourly.get("time") or []
+    temps = hourly.get("temperature_2m") or []
+    dews = hourly.get("dew_point_2m") or []
+    day_prefix = day.isoformat()
+
+    by_hour: dict[int, float] = {}
+    temp_by_hour: dict[int, float] = {}
+    dew_by_hour: dict[int, float] = {}
+    for i, stamp in enumerate(times):
+        if not isinstance(stamp, str) or not stamp.startswith(day_prefix):
+            continue
+        try:
+            hour = int(stamp[11:13])
+        except ValueError:
+            continue
+        temp = _f(temps[i]) if i < len(temps) else None
+        dew = _f(dews[i]) if i < len(dews) else None
+        if temp is None or dew is None:
+            continue
+        temp_f, dew_f = temp * 9 / 5 + 32, dew * 9 / 5 + 32
+        by_hour[hour] = temp_f + dew_f
+        temp_by_hour[hour] = temp_f
+        dew_by_hour[hour] = dew_f
+
+    best_start: int | None = None
+    best_score: float | None = None
+    for start in range(_RUN_EARLIEST_H, _RUN_LATEST_H - block_hours + 1):
+        hours = [start + o for o in range(block_hours)]
+        if not all(h in by_hour for h in hours):
+            continue
+        score = sum(by_hour[h] for h in hours) / block_hours
+        if best_score is None or score < best_score:
+            best_start, best_score = start, score
+
+    if best_start is None or best_score is None:
+        return {"available": False}
+    end = best_start + block_hours
+    return {
+        "available": True,
+        "day": day_prefix,
+        "start_hour": best_start,
+        "end_hour": end,
+        "label": f"{_hour_label(best_start)}-{_hour_label(end)}",
+        "avg_temp_f": round(
+            sum(temp_by_hour[best_start + o] for o in range(block_hours)) / block_hours, 1
+        ),
+        "avg_dew_point_f": round(
+            sum(dew_by_hour[best_start + o] for o in range(block_hours)) / block_hours, 1
+        ),
+        "comfort_sum": round(best_score, 1),
+    }
+
+
 # -- event countdown ----------------------------------------------------------
 
 

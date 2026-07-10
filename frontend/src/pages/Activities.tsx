@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { api } from "../api";
+import { api, type ActivityRow } from "../api";
 import { RouteMap } from "../components/RouteMap";
 import { Card, Empty, Loading, Modal, Pill, Stat } from "../components/ui";
 import { fahrenheit, hoursMin, miles, paceFromSeconds, shortDate, titleize } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
+import { useLayoutMode } from "../lib/layoutMode";
 
 const M_PER_FT = 0.3048;
 
@@ -158,8 +159,48 @@ function SessionModal({ id, onClose }: { id: number; onClose: () => void }) {
   );
 }
 
+/** Mobile: one tap-friendly card per activity instead of the 10-column table.
+ * Same data, same detail sheet — just an information layout built for 390px. */
+function ActivityCards({
+  rows,
+  onOpen,
+}: {
+  rows: ActivityRow[];
+  onOpen: (id: number) => void;
+}) {
+  return (
+    <div>
+      {rows.map((a) => {
+        const running = a.activity_type?.includes("running");
+        return (
+          <button key={a.activity_id} className="m-act" onClick={() => onOpen(a.activity_id)}>
+            <span className="m-act-title">
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {a.name ?? titleize(a.activity_type) ?? "Activity"}
+              </span>
+              <span className="muted tnum" style={{ flexShrink: 0, fontWeight: 500 }}>
+                {shortDate(a.start_time_local ?? a.day)}
+              </span>
+            </span>
+            <span className="m-act-stats tnum">
+              {a.distance_m != null && <span>{miles(a.distance_m)} mi</span>}
+              {running && a.duration_s != null && a.distance_m != null && (
+                <span>{paceFromSeconds(a.duration_s, a.distance_m)}</span>
+              )}
+              {a.duration_s != null && <span>{hoursMin(a.duration_s)}</span>}
+              {a.avg_hr != null && <span>{Math.round(a.avg_hr)} bpm</span>}
+              {a.training_load != null && <span>load {Math.round(a.training_load)}</span>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Activities() {
   const { data, loading } = useAsync(() => api.activities(180), []);
+  const { effective } = useLayoutMode();
   const [type, setType] = useState<string>("all");
   const [openId, setOpenId] = useState<number | null>(null);
 
@@ -195,6 +236,15 @@ export default function Activities() {
         ))}
       </div>
 
+      {effective === "mobile" ? (
+        rows.length === 0 ? (
+          <Card>
+            <Empty msg="No activities in range." />
+          </Card>
+        ) : (
+          <ActivityCards rows={rows} onOpen={setOpenId} />
+        )
+      ) : (
       <Card>
         {rows.length === 0 ? (
           <Empty msg="No activities in range." />
@@ -245,6 +295,7 @@ export default function Activities() {
           </div>
         )}
       </Card>
+      )}
 
       {openId != null && <SessionModal id={openId} onClose={() => setOpenId(null)} />}
     </>

@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { shortDate } from "../lib/format";
+import { useLayoutMode } from "../lib/layoutMode";
 
 // Resolved light-mode hexes (SVG presentation attributes don't resolve CSS var()).
 // Series + status are the dataviz validated LIGHT column; chrome is the cool-grey
@@ -125,6 +126,8 @@ export function Sparkline({
 }
 
 // Single-series trend with a real crosshair tooltip and recessive grid.
+// Layout-aware: on the mobile layout the axes tighten (narrower Y gutter,
+// sparser X ticks) and tall charts clamp so pages don't become endless.
 export function TrendLine({
   data,
   dataKey,
@@ -140,12 +143,19 @@ export function TrendLine({
   unit?: string;
   domain?: [number | "auto", number | "auto"];
 }) {
+  const { effective } = useLayoutMode();
+  const compact = effective === "mobile";
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: -8 }}>
+    <ResponsiveContainer width="100%" height={compact ? Math.min(height, 220) : height}>
+      <LineChart data={data} margin={{ top: 8, right: compact ? 6 : 12, bottom: 4, left: -8 }}>
         <CartesianGrid stroke={COLORS.grid} vertical={false} />
-        <XAxis dataKey="day" tickFormatter={(d) => shortDate(String(d))} minTickGap={36} {...axisProps} />
-        <YAxis domain={domain ?? ["auto", "auto"]} width={44} {...axisProps} />
+        <XAxis
+          dataKey="day"
+          tickFormatter={(d) => shortDate(String(d))}
+          minTickGap={compact ? 56 : 36}
+          {...axisProps}
+        />
+        <YAxis domain={domain ?? ["auto", "auto"]} width={compact ? 34 : 44} {...axisProps} />
         <Tooltip
           cursor={{ stroke: COLORS.baseline, strokeWidth: 1 }}
           content={<ChartTooltip fmt={(v) => `${v}${unit}`} />}

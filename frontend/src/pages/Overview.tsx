@@ -85,6 +85,12 @@ function ReadinessCard() {
               Training-load penalty −{r.load_penalty} ({r.load_note}).
             </div>
           )}
+          {r.garmin_training_readiness != null && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              Cross-check: Garmin's Training Readiness says {Math.round(r.garmin_training_readiness)}
+              /100 this morning.
+            </div>
+          )}
         </>
       )}
     </Card>

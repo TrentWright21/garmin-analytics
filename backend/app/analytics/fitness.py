@@ -213,32 +213,45 @@ def vo2max_trend(daily: pl.DataFrame, window: int = 90) -> dict[str, Any]:
 # -- intensity distribution ---------------------------------------------------
 
 
+_ZONE_COLS = ("zone_1_s", "zone_2_s", "zone_3_s", "zone_4_s", "zone_5_s")
+
+
 def intensity_distribution(activities: pl.DataFrame, hr_max: float | None = None) -> dict[str, Any]:
-    """Aerobic vs anaerobic training distribution, weighted by duration.
+    """Easy / moderate / hard training distribution, weighted by real time in zone.
 
-    Each session is bucketed by its *average* HR into easy / moderate / hard
-    (see ``physiology.intensity_band``), then time is summed per bucket. Reports
-    the polarized-training view: elite endurance athletes spend ~80% easy and
-    ~20% hard with little in the "moderate" grey zone (Seiler). A high moderate
-    share is the classic "grey-zone junk miles" pattern.
-
-    NOTE: this uses session-average HR, not per-second zone streams. The true
-    time-in-zone distribution needs the activity-detail endpoint (see roadmap).
+    Sessions with Garmin's per-zone seconds (``zone_1_s``..``zone_5_s``, Phase
+    1b) contribute their true time-in-zone: Z1-2 -> easy, Z3 -> moderate,
+    Z4-5 -> hard — so an "easy" run's tempo surges are counted honestly.
+    Sessions without zone data fall back to bucketing by session-average HR
+    (``physiology.intensity_band``). Reports the polarized-training view:
+    elite endurance practice is ~80% easy / ~20% hard with little grey-zone
+    middle (Seiler); a high moderate share is the classic junk-miles pattern.
     """
-    if activities.is_empty() or not {"avg_hr", "duration_s"}.issubset(activities.columns):
+    if activities.is_empty() or "duration_s" not in activities.columns:
         return {"available": False}
     hr_max = hr_max if hr_max is not None else estimate_hr_max(activities)
-    df = activities.select("avg_hr", "duration_s").drop_nulls()
-    if df.is_empty():
-        return {"available": False}
+    has_zone_cols = set(_ZONE_COLS).issubset(activities.columns)
 
     minutes = {"easy": 0.0, "moderate": 0.0, "hard": 0.0}
-    for row in df.iter_rows(named=True):
-        avg_hr = _f(row["avg_hr"])
-        dur = _f(row["duration_s"])
+    zone_minutes = {f"z{i}": 0.0 for i in range(1, 6)}
+    zoned_sessions = 0
+    fallback_sessions = 0
+    for row in activities.iter_rows(named=True):
+        zones = [_f(row.get(c)) or 0.0 for c in _ZONE_COLS] if has_zone_cols else []
+        if sum(zones) > 0:
+            minutes["easy"] += (zones[0] + zones[1]) / 60.0
+            minutes["moderate"] += zones[2] / 60.0
+            minutes["hard"] += (zones[3] + zones[4]) / 60.0
+            for i, seconds in enumerate(zones):
+                zone_minutes[f"z{i + 1}"] += seconds / 60.0
+            zoned_sessions += 1
+            continue
+        avg_hr = _f(row.get("avg_hr"))
+        dur = _f(row.get("duration_s"))
         if avg_hr is None or dur is None:
             continue
         minutes[intensity_band(avg_hr, hr_max)] += dur / 60.0
+        fallback_sessions += 1
 
     total = sum(minutes.values())
     if total <= 0:
@@ -255,10 +268,19 @@ def intensity_distribution(activities: pl.DataFrame, hr_max: float | None = None
     elif pct["hard"] < 5:
         verdict = "all-easy"
 
+    method = (
+        "time_in_zone"
+        if zoned_sessions and not fallback_sessions
+        else "session_avg"
+        if fallback_sessions and not zoned_sessions
+        else "mixed"
+    )
     return {
         "available": True,
         "hr_max_used": round(hr_max, 0),
+        "method": method,
         "minutes": {k: round(v, 0) for k, v in minutes.items()},
+        "zone_minutes": {k: round(v, 0) for k, v in zone_minutes.items()},
         "pct": pct,
         "aerobic_pct": aerobic,
         "anaerobic_pct": anaerobic,

@@ -195,17 +195,6 @@ def get_training_load(days: int = 90) -> str:
     )
 
 
-def get_readiness() -> str:
-    """Today's composite readiness score (0-100) with its visible components.
-
-    Components (each 0-100): HRV vs personal 60-day baseline, last night's
-    sleep score, Body Battery peak, and inverted stress. The score is the
-    component average - not Garmin's black-box number.
-    """
-    start, end = _range(90)
-    return _js(ax.readiness_score(ax.load_daily(start, end)))
-
-
 def get_insights() -> str:
     """Auto-generated findings from up to a year of data.
 
@@ -356,7 +345,6 @@ COACH_TOOLS: list[BetaFunctionTool[Any]] = [
     beta_tool(get_daily_metrics),
     beta_tool(get_rolling_trends),
     beta_tool(get_training_load),
-    beta_tool(get_readiness),
     beta_tool(get_insights),
     beta_tool(get_recent_activities),
     beta_tool(get_fitness_form),

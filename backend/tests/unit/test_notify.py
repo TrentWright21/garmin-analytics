@@ -96,6 +96,7 @@ def test_send_morning_briefing_delivers_and_dedups(
 ) -> None:
     monkeypatch.setenv("GA_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
     monkeypatch.setattr("app.notify.message._STATE_FILE", tmp_path / "last_brief.txt")
+    monkeypatch.setattr("app.ai.morning_brief._WORKOUT_CACHE", tmp_path / "workout.json")
     get_settings.cache_clear()
     db.reset_engine_for_tests()
 
@@ -133,6 +134,7 @@ def test_compose_morning_message_has_all_sections(
     from app.notify.message import compose_morning_message
 
     monkeypatch.setenv("GA_DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+    monkeypatch.setattr("app.ai.morning_brief._WORKOUT_CACHE", tmp_path / "workout.json")
     get_settings.cache_clear()
     db.reset_engine_for_tests()
 

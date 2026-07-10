@@ -23,7 +23,7 @@ from app.analytics import engine as ax
 from app.analytics import fitness, readiness
 from app.analytics.physiology import _f
 from app.config import get_app_config, get_settings
-from app.db.engine import latest_raw, session_scope
+from app.db.engine import latest_raw, latest_raw_any, session_scope
 from app.logging import get_logger
 from app.normalize.body_battery import parse_body_battery
 
@@ -102,6 +102,9 @@ def build_briefing() -> dict[str, Any]:
         _f(weather_row.get("apparent_high_c")),
         _f(weather_row.get("temp_high_c")),
     )
+    with session_scope() as s:
+        forecast = latest_raw_any(s, "weather_forecast")
+    run_window = brief.best_run_window(forecast, today)
 
     return {
         "date": str(today),
@@ -112,6 +115,7 @@ def build_briefing() -> dict[str, Any]:
         "recovery": brief.recovery_timer(acts, now, tsb, garmin_recovery_min=garmin_recovery),
         "weather": _weather_out(weather_row),
         "heat": heat,
+        "run_window": run_window,
         "event": _event_out(today),
     }
 
@@ -120,6 +124,18 @@ def build_briefing() -> dict[str, Any]:
 def briefing() -> dict[str, Any]:
     """The daily brief the dashboard's morning-brief page renders in one shot."""
     return build_briefing()
+
+
+@router.get("/briefing/workout")
+def briefing_workout() -> dict[str, Any]:
+    """The day's recommended workout — the same engine (and the same per-day
+    cache) as the Telegram morning brief, so the page and the push always agree.
+    First uncached call of the day may make one Claude request (when the AI key
+    is configured); every later call is served from ``data/todays_workout.json``.
+    """
+    from app.ai.morning_brief import todays_workout
+
+    return todays_workout(get_settings(), get_app_config())
 
 
 @router.get("/metrics/body-battery")

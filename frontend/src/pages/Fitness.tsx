@@ -14,6 +14,7 @@ import { COLORS, ChartTooltip, axisProps } from "../components/charts";
 import { Card, Empty, Loading, Pill } from "../components/ui";
 import { shortDate, titleize } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
+import { useLayoutMode } from "../lib/layoutMode";
 
 const FORM_STATUS: Record<string, string> = {
   fresh: "good",
@@ -44,11 +45,16 @@ export default function Fitness() {
   const pmc = useAsync(() => api.fitnessPmc(180), []);
   const vo2 = useAsync(() => api.vo2max(), []);
   const intensity = useAsync(() => api.intensity(42), []);
+  const { effective } = useLayoutMode();
+  const compact = effective === "mobile";
 
   if (pmc.loading) return <Loading />;
 
   const s = pmc.data?.summary;
-  const series = pmc.data?.series ?? [];
+  const all = pmc.data?.series ?? [];
+  // Phones get the last ~90 days of the PMC: the shapes stay readable and the
+  // page stays scrollable; the full 180d view remains one toggle away.
+  const series = compact ? all.slice(-90) : all;
 
   if (!s?.available) {
     return (
@@ -112,16 +118,16 @@ export default function Fitness() {
         className=""
       >
         <div style={{ marginTop: 4 }}>
-          <ResponsiveContainer width="100%" height={320}>
-            <ComposedChart data={series} margin={{ top: 8, right: 16, bottom: 4, left: -10 }}>
+          <ResponsiveContainer width="100%" height={compact ? 240 : 320}>
+            <ComposedChart data={series} margin={{ top: 8, right: compact ? 8 : 16, bottom: 4, left: -10 }}>
               <CartesianGrid stroke={COLORS.grid} vertical={false} />
               <XAxis
                 dataKey="day"
                 tickFormatter={(d) => shortDate(String(d))}
-                minTickGap={44}
+                minTickGap={compact ? 56 : 44}
                 {...axisProps}
               />
-              <YAxis width={40} {...axisProps} />
+              <YAxis width={compact ? 34 : 40} {...axisProps} />
               <Tooltip
                 cursor={{ stroke: COLORS.baseline }}
                 content={<ChartTooltip fmt={(v) => (v == null ? "—" : Number(v).toFixed(1))} />}

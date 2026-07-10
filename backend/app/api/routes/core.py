@@ -66,12 +66,6 @@ def training_load(days: int = Query(default=180, ge=28, le=3650)) -> dict[str, A
     }
 
 
-@router.get("/analytics/readiness")
-def readiness() -> dict[str, Any]:
-    start, end = _range(90)
-    return ax.readiness_score(ax.load_daily(start, end))
-
-
 @router.get("/insights")
 def insights(days: int = Query(default=365, ge=30, le=3650)) -> dict[str, list[str]]:
     start, end = _range(days)

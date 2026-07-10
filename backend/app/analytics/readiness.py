@@ -25,7 +25,7 @@ from typing import Any
 import polars as pl
 
 from app.analytics import engine as ax
-from app.analytics import fitness
+from app.analytics import fitness, sleep_coach
 from app.analytics.physiology import _f
 
 # Component weights for the composite readiness score. Only the components with
@@ -54,6 +54,13 @@ HRV_ALARM_PCT = -12.0  # red (legacy % fallback)
 # z thresholds come from the SWC band itself (engine.HRV_SWC_BAND_SD /
 # HRV_SWC_ALARM_SD); the % constants above only serve histories too thin for a
 # banded baseline (~4 weeks), where hrv_swc returns null z.
+
+# The sleep component blends last night's score with accumulated debt: one good
+# night after a week of short sleep is NOT full recovery. Debt is the last 7
+# nights vs the personal need (sleep_coach), costing points per deficit hour.
+SLEEP_LAST_NIGHT_WEIGHT = 0.6
+SLEEP_DEBT_WEIGHT = 0.4
+SLEEP_DEBT_POINTS_PER_HOUR = 10.0
 
 
 # -- resting HR ---------------------------------------------------------------
@@ -132,8 +139,9 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
     if rhr_dev is not None:
         # Below baseline (negative dev) is good and tops out at 100.
         components["resting_hr"] = _clip(100.0 - max(0.0, rhr_dev) * RHR_POINTS_PER_BPM)
-    if (ss := last.get("sleep_score")) is not None:
-        components["sleep"] = _clip(float(ss))
+    sleep_comp, sleep_debt_h = _sleep_component(last, daily)
+    if sleep_comp is not None:
+        components["sleep"] = sleep_comp
     if (bb := last.get("body_battery_high")) is not None:
         components["body_battery"] = _clip(float(bb))
     if (stress := last.get("avg_stress")) is not None:
@@ -159,8 +167,38 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
         "drivers": drivers,
         "load_penalty": round(penalty, 1),
         "load_note": load_note,
+        "sleep_debt_7d_h": sleep_debt_h,
+        # Garmin's own black-box Training Readiness for the same morning — a
+        # labeled cross-check, never an input (our score stays explainable).
+        "garmin_training_readiness": _f(last.get("training_readiness")),
         "recommendation": _readiness_reco(band, drivers),
     }
+
+
+def _sleep_component(
+    last: dict[str, Any], daily: pl.DataFrame
+) -> tuple[float | None, float | None]:
+    """Blended sleep component (0-100) + the 7-night debt hours behind it.
+
+    60% last night's score, 40% a debt grade (100 minus points per hour of
+    7-night deficit vs the personal sleep need). Degrades to whichever half is
+    available so a fresh install still scores sleep.
+    """
+    score = last.get("sleep_score")
+    debt_score: float | None = None
+    debt_hours: float | None = None
+    frame = sleep_coach.sleep_frame(daily)
+    if not frame.is_empty():
+        need = float(sleep_coach.sleep_need(frame)["estimate_hours"])
+        debt_hours = _f(sleep_coach.sleep_debt(frame, need, window=7).get("rolling_hours"))
+        if debt_hours is not None:
+            debt_score = _clip(100.0 - debt_hours * SLEEP_DEBT_POINTS_PER_HOUR)
+    if score is not None and debt_score is not None:
+        blended = SLEEP_LAST_NIGHT_WEIGHT * float(score) + SLEEP_DEBT_WEIGHT * debt_score
+        return _clip(blended), debt_hours
+    if score is not None:
+        return _clip(float(score)), debt_hours
+    return debt_score, debt_hours
 
 
 def _hrv_component_from_z(z: float) -> float:
@@ -205,7 +243,7 @@ def _drivers(components: dict[str, float]) -> list[dict[str, Any]]:
     label = {
         "hrv": "HRV vs baseline",
         "resting_hr": "Resting HR vs baseline",
-        "sleep": "Last night's sleep",
+        "sleep": "Sleep (last night + 7-day debt)",
         "body_battery": "Body Battery peak",
         "stress": "Stress load",
     }

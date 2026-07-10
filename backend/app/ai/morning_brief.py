@@ -29,7 +29,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from app.analytics.readiness import GREEN_MIN, YELLOW_MIN
-from app.config import GoalConfig, Settings
+from app.config import DEFAULT_DATA_DIR, AppConfig, GoalConfig, Settings
 from app.logging import get_logger
 
 log = get_logger(__name__)
@@ -46,7 +46,9 @@ _METERS_PER_MILE = 1609.344
 class WorkoutRecommendation(BaseModel):
     """One day's prescription. ``intensity`` is always clamped to the ceiling."""
 
-    workout_type: str  # easy_run|long_run|intervals|tempo|recovery|strength|cross_training|rest
+    workout_type: (
+        str  # easy_run|long_run|intervals|tempo|recovery|strength|cross_training|long_hike|rest
+    )
     intensity: Intensity
     duration_min: int | None = None
     instructions: str
@@ -213,6 +215,8 @@ def intensity_ceiling(
 # -- rule-based fallback (used with no API key or on any LLM error) ------------
 
 _ENDURANCE = {"marathon", "half_marathon", "15k", "10k", "5k", "endurance", "climb"}
+# Climb/summit goals get vert + time-on-feet on quality days, not tempo runs.
+_CLIMB = {"climb", "hike", "summit", "mountaineering"}
 
 
 def _yesterday_was_hard(recent: list[dict[str, Any]], today: date) -> bool:
@@ -311,6 +315,21 @@ def _fallback_core(
             why="You're recovered, but back-to-back hard days add injury risk, not fitness.",
             watch_out="Keep it truly easy; save the quality for a fresher day.",
         )
+    if focus in _CLIMB:
+        return WorkoutRecommendation(
+            workout_type="long_hike",
+            intensity="moderate",
+            duration_min=90,
+            instructions=(
+                "Long vert-focused hike: 60-120 min of steady climbing, weighted pack if "
+                "training for a loaded summit. No trail handy? Stairs or steep treadmill "
+                "incline work."
+            ),
+            why="You're recovered and your goal is a climb - vertical gain and time on "
+            "feet build summit fitness better than running speed.",
+            watch_out="Keep the climbing effort conversational; ease the descents if "
+            "knees or ankles complain.",
+        )
     if focus == "strength":
         return WorkoutRecommendation(
             workout_type="strength",
@@ -353,7 +372,8 @@ Hard rules:
 - Interpret the data; don't just restate numbers. Reason about fatigue, recovery,
   sleep, readiness, and training direction, keeping the goal and recent load in mind.
 - Use today's weather: if it's hot/humid or bad, suggest going earlier, easier, or
-  moving the session indoors.
+  moving the session indoors. When best_run_window is given, name that window as
+  the time to head out.
 - Adjust to condition: poor sleep / low body battery / poor recovery -> easier or
   recovery; high readiness with supportive recent load -> harder; high training
   load -> avoid piling on intensity; little recent training -> ease back in.
@@ -376,7 +396,7 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
   "insight": 2-3 sentences interpreting the data (fatigue/recovery/sleep/readiness/
              training + weather). Concrete, specific to today's numbers, no fluff.
   "workout_type": one of easy_run, long_run, intervals, tempo, recovery,
-                  strength, cross_training, rest
+                  strength, cross_training, long_hike, rest
   "intensity": one of rest, recovery, easy, moderate, hard  (<= the ceiling)
   "duration_min": integer minutes, or null for a rest day
   "instructions": 1-2 sentences, specific and actionable
@@ -473,6 +493,15 @@ def _prompt_payload(
             "intensity_minutes": latest.get("intensity_minutes"),
         },
         "weather_today": _weather_payload(weather, heat) if weather.get("available") else None,
+        "best_run_window": (
+            {
+                "label": window.get("label"),
+                "avg_temp_f": window.get("avg_temp_f"),
+                "avg_dew_point_f": window.get("avg_dew_point_f"),
+            }
+            if (window := brief.get("run_window") or {}).get("available")
+            else None
+        ),
         "recent_activities": recent[-8:],
     }
 
@@ -625,6 +654,53 @@ def _json_object(text: str) -> str:
     if start == -1 or end == -1 or end < start:
         raise ValueError("no JSON object found in model response")
     return text[start : end + 1]
+
+
+# -- the day's workout, cached once per day -----------------------------------
+
+# One recommendation per calendar day, shared by every consumer: the Telegram
+# morning message computes fresh (post-sync) and overwrites; the dashboard's
+# Today screen reads the cache first — so the page and the message can never
+# disagree, and opening the page doesn't burn extra AI calls.
+_WORKOUT_CACHE = DEFAULT_DATA_DIR / "todays_workout.json"
+
+
+def save_workout_cache(rec: WorkoutRecommendation, today: date) -> None:
+    """Persist the day's recommendation. Best-effort — never raises."""
+    try:
+        _WORKOUT_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"date": str(today), "workout": rec.model_dump()}
+        _WORKOUT_CACHE.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError as exc:
+        log.warning("morning_brief.workout_cache_write_failed", err=str(exc))
+
+
+def load_cached_workout(today: date) -> dict[str, Any] | None:
+    """The cached recommendation, or None when missing/stale/unreadable."""
+    try:
+        raw = json.loads(_WORKOUT_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict) or raw.get("date") != str(today):
+        return None  # a previous day's plan is worse than none
+    return raw
+
+
+def todays_workout(settings: Settings, cfg: AppConfig, *, force: bool = False) -> dict[str, Any]:
+    """The day's recommendation: cache hit when fresh, else compute + cache.
+
+    ``force`` recomputes (the 06:30 sender uses it so the message always
+    reflects post-sync data, then overwrites the cache for the page).
+    """
+    today = date.today()
+    if not force:
+        cached = load_cached_workout(today)
+        if cached is not None:
+            return cached
+    brief, recent, latest = gather_context()
+    rec = build_workout(settings, cfg.goal, brief, recent, latest, today=today)
+    save_workout_cache(rec, today)
+    return {"date": str(today), "workout": rec.model_dump()}
 
 
 # -- data collection (the only DB-touching function) --------------------------

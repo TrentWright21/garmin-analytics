@@ -12,7 +12,8 @@ unchecked task. Keep it updated as tasks land — check items off and note the c
   (2026-07-09). Details in "What already shipped" below. Dev DB renormalized (196
   days of training status, TE on 158/159 activities, 4 race-prediction days).
 - [ ] **Ops — 365-day backfill on the droplet** (no code; ~5k Garmin calls)
-- [ ] **Phase 2 — better analysis engine**
+- [x] **Phase 2 — better analysis engine** — COMPLETE 2026-07-09 (all nine items;
+  see the checked entries below for what each shipped).
 - [ ] **Phase 3 — UI restructure**
 - [ ] **Phase 4 — advanced coaching / product features**
 
@@ -185,8 +186,12 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
   Garmin 1.2-optimal; 28d gives 1.46-yellow — agreeing). First 14 days null
   (warmup). New loader helpers `training_load_for`/`load_training_load` apply
   athlete config; all 8 call sites ported (routes/coach/briefing).
-- [ ] **Sleep debt into readiness**: blend last-night score with 7d debt vs
-  personal need (sleep_coach already computes debt) — e.g. 60/40.
+- [x] **Sleep debt into readiness** — DONE 2026-07-09. `daily_readiness`'s sleep
+  component = 60% last-night score + 40% debt grade (100 − 10 pts/hour of
+  7-night deficit vs the personal need from `sleep_coach.sleep_need`, composed
+  as pure functions via `sleep_frame`). Output gains `sleep_debt_7d_h`; driver
+  label now "Sleep (last night + 7-day debt)". Degrades to whichever half
+  exists. Real data: Trent's 7.5 h/wk debt drags the component from 67 to 50.
 - [x] **Robust HR max + athlete config** — DONE 2026-07-09. `estimate_hr_max`
   now takes the 99.5th percentile (nearest) of all observed activity/daily max
   HRs — one strap artifact can no longer set every zone (needs ~100+ samples to
@@ -194,30 +199,146 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
   config.py + a commented `athlete:` block in config.yaml; the configured max
   now actually flows into `_hr_max()` in performance.py + coach.py and into the
   TRIMP fallback via `training_load_for`.
-- [ ] **Zone-based intensity distribution**: `fitness.intensity_distribution` sums
-  real `zone_*_s` (Phase 1b) instead of bucketing whole sessions by average HR;
-  report weekly Z1-2 / Z3 / Z4-5 vs the 80/20 target.
-- [ ] **Best-run-window**: pure fn over the stored hourly forecast (already fetched:
-  `relative_humidity_2m`, `dew_point_2m`, `temperature_2m`) — score each hour by
-  dew point + temp, return the best 2h block; add to brief + message.
-- [ ] **Goal-aware fallback templates**: "climb" focus should prescribe long-vert /
-  weighted-pack hikes on quality days, not tempo runs (`_fallback_core` maps climb
-  -> endurance -> tempo today).
+- [x] **Zone-based intensity distribution** — DONE 2026-07-09. Sessions with
+  Phase 1b `zone_1..5_s` contribute true time-in-zone (Z1-2 easy / Z3 moderate /
+  Z4-5 hard); sessions without fall back to session-average bucketing. Output
+  gains `method` (time_in_zone|session_avg|mixed) + `zone_minutes` (z1..z5, for
+  the Phase 3 stacked bar). Real 42d data: verdict "grey-zone-heavy" (39% Z3)
+  — an honest reading the session-average method blurred.
+- [x] **Best-run-window** — DONE 2026-07-09. `briefing.best_run_window` (pure):
+  scores each forecast hour by temp°F + dew°F (the runner's comfort sum), returns
+  the coolest 2h block in 05:00-21:00. In `/api/briefing` as `run_window`, in the
+  Telegram message ("Best run window: 5 AM-7 AM (dew 69°F)"), and in the AI
+  payload (`best_run_window`, with a prompt rule to name it). Verified on the
+  real stored forecast (today: 5-7 AM, dew 68.9°F).
+- [x] **Goal-aware fallback templates** — DONE 2026-07-09. `_CLIMB` focuses
+  (climb/hike/summit/mountaineering) get a `long_hike` quality day (60-120 min
+  vert, weighted pack, stairs/incline fallback) instead of tempo; `long_hike`
+  added to the AI workout_type vocabulary. NOTE: Trent's configured focus is
+  `endurance` (Whitney lives in the note), so his fallback stays tempo unless
+  he switches `goal.focus: climb` in config.yaml.
 - [x] **Honest copy** — DONE 2026-07-09. LOAD_SPIKE red now reads "a heuristic
   caution, not an injury prediction" (Impellizzeri noted in code comments); the
   Overview risk panel subtitle says "cautions, not diagnoses"; the coach tool's
   reference block matches.
-- [ ] **Retire the legacy readiness**: `engine.readiness_score` (equal-weight, still
-  served at `/api/analytics/readiness`) -> port consumers to readiness v2; show
-  Garmin's training_readiness alongside as a labeled cross-check.
+- [x] **Retire the legacy readiness** — DONE 2026-07-09. `engine.readiness_score`,
+  the `/api/analytics/readiness` endpoint, the coach's redundant `get_readiness`
+  tool, and the frontend's unused `Readiness` type/client are all deleted
+  (nothing consumed them but tests — readiness v2 is THE readiness).
+  `daily_readiness` output gains `garmin_training_readiness` (labeled
+  cross-check, never an input) and the Overview card renders it ("Cross-check:
+  Garmin's Training Readiness says 50/100"). One readiness score remains (D15
+  closed).
 
-## Phase 3 — UI restructure (10 pages -> 6)
+## Phase 3 — UI: iPhone/mobile mode first (3a), then desktop restructure (3b)
 
-- [ ] **Today** (merge Briefing + Overview readiness/risk): readiness + drivers,
-  **today's recommended workout card** (same engine as Telegram — cache the day's
-  recommendation server-side, e.g. JSON next to `data/last_morning_brief.txt`, so
-  page and message never disagree), recovery, weather + best window, yesterday
-  recap. Mobile-first: this is the 6:30am page.
+Phase 3 now leads with the **mobile initiative** (2026-07-09 request): the
+desktop dashboard works well on the PC and must NOT be disrupted; the app is
+poor on Trent's iPhone. Two presentation modes (Desktop / Mobile) + an Auto
+default, with a visible, persisted toggle. The mobile "Today" screen absorbs
+the old Phase 3 "Today page" item; the 10->6 desktop consolidation moves to 3b.
+
+### Phase 3a — layout modes + genuine iPhone experience
+
+**Audit findings (2026-07-09; the mobile problems being fixed):**
+
+- Stack: Vite + React 18 + TS, react-router v6, Recharts, Leaflet, one plain-CSS
+  design system (`theme.css`, CSS vars). No frontend test framework (`tsc -b &&
+  vite build` are the gates). Data fetching = per-component `useAsync` over
+  `api.ts`; no state library.
+- Current "mobile" = compressed desktop: breakpoints at 1180/980/900/640 collapse
+  grids via `!important`; at <900px the 9-item sidebar becomes a hamburger
+  drawer. No bottom nav, no mobile information hierarchy — the 6:30am questions
+  (recovered? sleep? what to do? anything wrong?) are scattered across
+  Briefing/Overview, and the day's recommended workout exists ONLY in Telegram.
+- iOS-specific bugs: `<meta color-scheme="dark">` contradicts the light theme
+  (dark form controls/scrollbars on iPhone); no `viewport-fit=cover` or
+  safe-area insets (home-indicator overlap); `100vh` in sidebar + coach layout
+  (Safari URL-bar jump); inputs at 13-14px trigger iOS focus-zoom; toast sits in
+  the home-indicator zone.
+- Activities = 10-column table with horizontal scroll + tiny tap rows; session
+  detail is a desktop modal. PaceCoach has 3 desktop tables + a 130px number
+  input. Charts use desktop axis widths/margins/180-365d ranges; legends and
+  ticks get dense at 390px. Coach chat = 70vh panel + wrap-chip conversation
+  list + 14px textarea (zoom).
+
+**Architecture (implemented in `frontend/src/lib/layoutMode.tsx`):**
+
+- `LayoutModeProvider` + `useLayoutMode()`: `mode: auto|desktop|mobile`
+  persisted at localStorage `waypoint-layout-mode`; viewport compactness from a
+  single `matchMedia("(max-width: 767px)")` listener (no resize polling);
+  `effective = mode === "auto" ? (compact ? mobile : desktop) : mode`. The
+  effective value is stamped on `<html data-layout>` so CSS can scope mobile
+  rules without JS in every component. Only the effective shell renders.
+- `App.tsx` keeps the existing desktop shell byte-for-byte for
+  `effective === "desktop"` (sidebar, drawer under 900px, all routes); a new
+  `MobileShell` renders for `effective === "mobile"`: sticky top bar, content,
+  fixed bottom nav (5 tabs, 44px+ targets, `env(safe-area-inset-bottom)`).
+  Pages/business logic/API calls are shared; only presentation forks, and only
+  where needed (Activities renders cards instead of the table on mobile; charts
+  read the context for compact axes). `api.ts` gains a short-TTL in-memory GET
+  cache so toggling layouts doesn't refetch everything.
+- Toggle UI (`components/LayoutToggle.tsx`, a labeled segmented control:
+  Auto/Desktop/Mobile) lives in the desktop sidebar footer and on the mobile
+  More screen. Mobile on a big monitor and Desktop on the phone both honor the
+  manual choice (dev/testing + user preference).
+
+**Mobile information hierarchy (bottom nav: Today · Training · Activities ·
+Coach · More):**
+
+1. **Today** (`pages/mobile/Today.tsx`, mobile home `/today`) — answers the
+   morning questions in order: readiness hero (score/band/recommendation +
+   Garmin cross-check) -> **Today's plan** card (the same workout engine as the
+   Telegram brief, via new `GET /api/briefing/workout`, server-cached per day in
+   `data/todays_workout.json` so page and message never disagree; why/watch-out
+   behind progressive disclosure) -> alerts (risk flags, stale-data) -> vitals
+   grid (sleep, HRV, RHR, Body Battery) -> weather + best run window + heat ->
+   recovery/streak -> event countdown -> link to the full desktop-style pages.
+2. **Training** = Fitness & Form (PMC, VO2max, intensity) with compact charts.
+3. **Activities** = stacked tap-friendly cards + bottom-sheet session detail
+   (the desktop modal restyles as a sheet under `data-layout=mobile`).
+4. **Coach** = the chat, sized for a phone (dvh heights, 16px input, horizontal
+   conversation strip).
+5. **More** = every remaining route (Briefing, Overview, Sleep, Pace, Trends,
+   Load) + Sync now + layout toggle + logout. Nothing is hidden, only re-ranked.
+
+**Risk areas:** the `!important` breakpoint overrides (desktop-mode phones keep
+them — unchanged); Recharts tick density on 320px; Leaflet maps inside a bottom
+sheet; iOS `dvh` support (fallbacks kept); the shared workout cache must never
+break the Telegram send path (send always recomputes + overwrites; the page
+reads).
+
+**Stages:** (1) layout-mode context + toggle + html/data-layer + viewport/meta
+fixes; (2) mobile shell + bottom nav + safe areas + CSS layer; (3) Today screen
++ `/api/briefing/workout` (+ backend tests); (4) per-route mobile passes
+(Activities cards, chart compaction, coach chat, bottom-sheet modal, tables);
+(5) gates (tsc/vite/ruff/mypy/pytest) + desktop-regression check + docs.
+
+**Status (2026-07-09): stages 1-5 implemented, awaiting Trent's commit +
+on-device check.** Landed: `lib/layoutMode.tsx` (provider/hook/persistence/
+`data-layout` stamp), `components/LayoutToggle.tsx` (sidebar footer + More),
+`MobileShell` in App.tsx (sticky header, 5-tab bottom nav, safe areas),
+`pages/mobile/Today.tsx` + `pages/mobile/More.tsx`, `GET /api/briefing/workout`
+with the shared `data/todays_workout.json` day cache (the Telegram sender now
+writes it too — page and push always agree), Activities mobile cards,
+bottom-sheet modal, mobile coach-chat sizing, compact charts (TrendLine,
+Trends 90d/260px, Fitness PMC 90d/240px), 16px mobile inputs, `color-scheme`
+light fix, `viewport-fit=cover`, 60s GET cache in api.ts, focus-visible +
+reduced-motion CSS. Gates: `tsc`+`vite build` clean, ruff/mypy clean, 204
+backend tests.
+
+**Honest remaining mobile work:** SleepCoach/PaceCoach/TrainingLoad/Overview/
+Briefing render through the generic mobile CSS (single column, compact cards)
+but have had no dedicated chart-by-chart pass (SleepCoach's 5-series charts and
+PaceCoach's three tables are usable-but-dense); no frontend test framework
+exists (layout logic is a pure `resolveEffective()` awaiting a runner); Leaflet
+route maps inside the bottom sheet + real-device safe-area behavior need an
+actual iPhone check (no browser emulation available in the dev loop that built
+this). Candidate next steps: vitest + RTL for layout-mode tests, route-level
+code splitting (bundle is ~800 kB), PaceCoach mobile tables -> key-value cards.
+
+### Phase 3b — desktop restructure (unchanged plan, later)
+
 - [ ] **Training** (merge Fitness + Training Load + load parts of Trends): PMC,
   weekly mileage + vert bars, weekly zone-time stacked bar, monotony, Garmin
   training status + Load Focus vs targets.
@@ -229,6 +350,8 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
   tooltips (driver/evidence data already in the API responses).
 - [ ] Extract repeated inline styles into `components/ui.tsx` variants; demote
   floors/respiration/SpO2 tiles to a "More" section.
+- [x] ~~Today page~~ — absorbed into Phase 3a's mobile Today screen + the
+  `/api/briefing/workout` endpoint (desktop can adopt the same card in 3b).
 
 ## Phase 4 — advanced coaching / product
 
@@ -249,11 +372,15 @@ Fixed in Phase 1a: load double-count in the ceiling (D1), partial-week monotony
 (D2), missing event/week context (D7), silent stale data (D4-part), no confidence
 concept (D14-part), back-to-back hard days (D10-part).
 
-Still open: HRV method below state of practice (D3), two parallel load models +
-unused TRIMP (D5), fragile HR max estimate (D6), recovery timer ignores Garmin's
-native number (D8), sleep debt unused by readiness (D9), TE-based hard-day
-detection (D10-rest), session-avg-HR intensity distribution (D11), climb-goal
-template mismatch (D12), overstated ACWR copy (D13), readiness reads today's
-partial `avg_stress` row (D4-rest: at 06:30 stress reflects overnight only —
-use yesterday's full-day value or label it), three coexisting readiness scores
-(D15), daily-only weather (D16).
+Fixed in the 2026-07-09 Phase 1b/2 sessions: D3 (HRV SWC), D5 (one load
+pipeline + TRIMP), D6 (robust HR max + athlete config), D8 (native recovery
+timer), D9 (sleep debt in readiness), D10-rest (TE hard days), D11 (real time
+in zone), D12 (climb templates), D13 (honest ACWR copy), D16-part (hourly
+forecast now drives the best-run-window).
+
+Also fixed 2026-07-09: D15 (legacy readiness retired — one score, with Garmin's
+as a labeled cross-check).
+
+Still open: readiness reads today's partial `avg_stress` row (D4-rest: at
+06:30 stress reflects overnight only — use yesterday's full-day value or label
+it). That is the LAST open finding from the review.

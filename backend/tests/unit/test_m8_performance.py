@@ -69,6 +69,7 @@ def test_estimate_hr_max_prefers_observed_and_configured() -> None:
     acts = pl.DataFrame({"max_hr": [170.0, 185.0, 180.0]})
     assert physiology.estimate_hr_max(acts) == 185.0
     assert physiology.estimate_hr_max(acts, configured=200.0) == 200.0
+    assert physiology.estimate_hr_max(pl.DataFrame()) == physiology.DEFAULT_HR_MAX
 
 
 def test_estimate_hr_max_sheds_single_spike_with_enough_data() -> None:
@@ -113,7 +114,6 @@ def test_acwr_warmup_window_reports_null() -> None:
     out = ax.acwr(load_frame([80.0] * 20))
     assert out.head(14)["acwr"].null_count() == 14  # too little history to judge
     assert out.tail(1).to_dicts()[0]["acwr"] == pytest.approx(1.0, abs=0.05)
-    assert physiology.estimate_hr_max(pl.DataFrame()) == physiology.DEFAULT_HR_MAX
 
 
 def test_hr_zone_and_band() -> None:
@@ -274,6 +274,35 @@ def test_hrv_swc_far_above_band_is_a_caution_not_a_bonus() -> None:
     assert by_code.get("HRV_ELEVATED") == "yellow"
     ready = readiness.daily_readiness(daily)
     assert ready["components"]["hrv"] == 70  # neutral, not extra credit
+
+
+def test_readiness_sleep_component_blends_seven_night_debt() -> None:
+    # Same 80-point sleep score both times; a week of 5h nights must still
+    # drag the sleep component and surface as debt hours.
+    rested = readiness.daily_readiness(daily_frame(70))
+    tired = readiness.daily_readiness(daily_frame(70, sleep_seconds=[27000] * 63 + [5 * 3600] * 7))
+    assert tired["components"]["sleep"] < rested["components"]["sleep"]
+    assert tired["sleep_debt_7d_h"] > rested["sleep_debt_7d_h"]
+
+
+def test_intensity_distribution_prefers_real_zone_seconds() -> None:
+    acts = pl.DataFrame(
+        {
+            "avg_hr": [120.0, 130.0],
+            "duration_s": [3600.0, 3600.0],
+            "zone_1_s": [600.0, 0.0],
+            "zone_2_s": [2400.0, 0.0],
+            "zone_3_s": [300.0, 0.0],
+            "zone_4_s": [300.0, 0.0],
+            "zone_5_s": [0.0, 0.0],
+        }
+    )
+    out = fitness.intensity_distribution(acts, hr_max=190)
+    assert out["method"] == "mixed"  # row 1 has zone data; row 2 falls back
+    assert out["minutes"]["easy"] == 110  # 50 zoned + 60 fallback minutes
+    assert out["minutes"]["moderate"] == 5
+    assert out["minutes"]["hard"] == 5  # Z4 surges inside an "easy" session count
+    assert out["zone_minutes"]["z2"] == 40
 
 
 def test_hrv_flat_or_thin_history_falls_back_to_legacy_pct() -> None:

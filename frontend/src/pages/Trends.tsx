@@ -13,6 +13,7 @@ import { COLORS, ChartTooltip, axisProps } from "../components/charts";
 import { Card, Loading } from "../components/ui";
 import { shortDate } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
+import { useLayoutMode } from "../lib/layoutMode";
 
 const METRICS: { key: keyof DailyRow; label: string; unit: string }[] = [
   { key: "training_readiness", label: "Training Readiness", unit: "" },
@@ -36,19 +37,24 @@ function rolling(rows: DailyRow[], key: keyof DailyRow, win: number): (number | 
 
 export default function Trends() {
   const { data, loading } = useAsync(() => api.daily(180), []);
+  const { effective } = useLayoutMode();
+  const compact = effective === "mobile";
   const [metric, setMetric] = useState<keyof DailyRow>("training_readiness");
 
   const chart = useMemo(() => {
     if (!data) return [];
     const r7 = rolling(data, metric, 7);
     const r30 = rolling(data, metric, 30);
-    return data.map((row, i) => ({
+    const rows = data.map((row, i) => ({
       day: row.day,
       raw: typeof row[metric] === "number" ? (row[metric] as number) : null,
       r7: r7[i] == null ? null : Math.round((r7[i] as number) * 10) / 10,
       r30: r30[i] == null ? null : Math.round((r30[i] as number) * 10) / 10,
     }));
-  }, [data, metric]);
+    // Phone widths can't resolve 180 daily points — default to the last 90
+    // days there (rolling averages still computed over the full history).
+    return compact ? rows.slice(-90) : rows;
+  }, [data, metric, compact]);
 
   if (loading) return <Loading />;
   const meta = METRICS.find((m) => m.key === metric)!;
@@ -74,12 +80,17 @@ export default function Trends() {
         ))}
       </div>
 
-      <Card title={meta.label} sub="Daily value with rolling overlays">
-        <ResponsiveContainer width="100%" height={360}>
-          <LineChart data={chart} margin={{ top: 8, right: 16, bottom: 4, left: -6 }}>
+      <Card title={meta.label} sub={compact ? "Last 90 days · rolling overlays" : "Daily value with rolling overlays"}>
+        <ResponsiveContainer width="100%" height={compact ? 260 : 360}>
+          <LineChart data={chart} margin={{ top: 8, right: compact ? 8 : 16, bottom: 4, left: -6 }}>
             <CartesianGrid stroke={COLORS.grid} vertical={false} />
-            <XAxis dataKey="day" tickFormatter={(d) => shortDate(String(d))} minTickGap={40} {...axisProps} />
-            <YAxis domain={["auto", "auto"]} width={48} {...axisProps} />
+            <XAxis
+              dataKey="day"
+              tickFormatter={(d) => shortDate(String(d))}
+              minTickGap={compact ? 56 : 40}
+              {...axisProps}
+            />
+            <YAxis domain={["auto", "auto"]} width={compact ? 36 : 48} {...axisProps} />
             <Tooltip
               cursor={{ stroke: COLORS.baseline }}
               content={<ChartTooltip fmt={(v) => (v == null ? "—" : `${v}${meta.unit}`)} />}
