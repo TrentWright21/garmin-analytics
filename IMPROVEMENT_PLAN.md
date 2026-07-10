@@ -161,11 +161,18 @@ ACWR (currently inflated on thin history), and the brief's confidence grades.
 
 ## Phase 2 — better analysis engine
 
-- [ ] **HRV methodology upgrade** (`engine.hrv_baseline_deviation` -> new fn):
-  ln-transform rMSSD, 7d rolling mean vs 60d baseline **excluding the last 7d**,
-  flag outside mean +/- 0.75 SD (smallest worthwhile change), red beyond 1.5 SD.
-  Also treat far-above-band HRV as a caution (parasympathetic saturation), not
-  automatically good. 290 days of HRV history makes this viable now.
+- [x] **HRV methodology upgrade** — DONE 2026-07-09. New `engine.hrv_swc`:
+  ln-rMSSD, 7d rolling ln-mean vs a 60d baseline **shifted back 7d** (the dip
+  can't hide itself), z + band (suppressed|below|normal|above|elevated) at
+  +/- 0.75 SD (SWC) and 1.5 SD alarm. Ported: `daily_readiness` HRV component
+  (credit caps at the band edge; z >= +1.5 scores neutral 70 — saturation
+  caution), `risk_flags` (`_hrv_flags`: graded HRV_SUPPRESSION by z + NEW
+  `HRV_ELEVATED` yellow caution), `generate_insights`. The legacy
+  `hrv_baseline_deviation` % method remains ONLY as the fallback when z is
+  null (thin <~4wk history or zero-variance baseline — the droplet until its
+  backfill) and under the legacy `readiness_score`. Verified on the real dev
+  DB (263 scored days: median z -0.05, 200 normal / 46 below / 10 suppressed
+  / 7 above, no explosions). 193 tests.
 - [ ] **One load pipeline**: `daily_training_load` falls back to
   `physiology.trimp()` (needs RHR + HR max) instead of its ad-hoc `min*HR/100`
   proxy; ACWR becomes ATL/CTL from `fitness.performance_management` (uncoupled

@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.db.engine as db
+from app.analytics import engine as ax
 from app.analytics import fitness, physiology, readiness, session
 from app.db.models.core import Activity, DailyMetrics
 
@@ -188,6 +189,56 @@ def test_risk_flags_quiet_when_healthy() -> None:
     out = readiness.risk_flags(daily_frame(70), pl.DataFrame())
     assert out["risk_band"] == "green"
     assert out["flag_count"] == 0
+
+
+# -- HRV SWC band (ln-rMSSD vs shifted baseline) -------------------------------
+
+
+def _noisy_hrv(n: int) -> list[int]:
+    """Steady but varying series (57..63) so the baseline has real variance."""
+    return [60 + (i % 7) - 3 for i in range(n)]
+
+
+def test_hrv_swc_steady_series_is_normal() -> None:
+    out = ax.hrv_swc(daily_frame(70, hrv=_noisy_hrv(70)))
+    last = out.tail(1).to_dicts()[0]
+    assert last["hrv_band"] == "normal"
+    assert abs(last["hrv_z"]) < ax.HRV_SWC_BAND_SD
+
+
+def test_hrv_swc_crash_is_suppressed_and_baseline_excludes_it() -> None:
+    hrv = _noisy_hrv(63) + [48] * 7  # last week crashed ~20% below baseline
+    out = ax.hrv_swc(daily_frame(70, hrv=hrv))
+    last = out.tail(1).to_dicts()[0]
+    assert last["hrv_band"] == "suppressed"
+    assert last["hrv_z"] <= -ax.HRV_SWC_ALARM_SD
+    # The shifted baseline didn't absorb the crash: the % deviation shows the
+    # full ~20% drop (the old in-window baseline would have diluted it).
+    assert last["hrv_dev_pct"] < -15
+    flags = readiness.risk_flags(daily_frame(70, hrv=hrv), pl.DataFrame())
+    by_code = {f["code"]: f for f in flags["flags"]}
+    assert by_code["HRV_SUPPRESSION"]["severity"] == "red"
+    assert "hrv_z" in by_code["HRV_SUPPRESSION"]["evidence"]
+
+
+def test_hrv_swc_far_above_band_is_a_caution_not_a_bonus() -> None:
+    hrv = _noisy_hrv(63) + [75] * 7  # last week far above the band
+    daily = daily_frame(70, hrv=hrv)
+    assert ax.hrv_swc(daily).tail(1).to_dicts()[0]["hrv_band"] == "elevated"
+    flags = readiness.risk_flags(daily, pl.DataFrame())
+    by_code = {f["code"]: f["severity"] for f in flags["flags"]}
+    assert by_code.get("HRV_ELEVATED") == "yellow"
+    ready = readiness.daily_readiness(daily)
+    assert ready["components"]["hrv"] == 70  # neutral, not extra credit
+
+
+def test_hrv_flat_or_thin_history_falls_back_to_legacy_pct() -> None:
+    # Constant baseline: SD is 0, so z is null and the legacy % method decides.
+    hrv = [60] * 23 + [50] * 7
+    daily = daily_frame(30, hrv=hrv)
+    assert ax.hrv_swc(daily).tail(1).to_dicts()[0]["hrv_z"] is None
+    flags = readiness.risk_flags(daily, pl.DataFrame())
+    assert "HRV_SUPPRESSION" in {f["code"] for f in flags["flags"]}
 
 
 # -- session intelligence ----------------------------------------------------

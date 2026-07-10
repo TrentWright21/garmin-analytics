@@ -144,8 +144,17 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   primary number (`recovery.source`), pace + aerobic TE in the Last-session
   line, "Garmin status: Unproductive" surfaced when not productive. 188 tests.
   Dev DB renormalized + verified (196 days of training status, TE on 158/159
-  activities, 4 race-prediction days). **NEXT UP:** droplet 365-day backfill
-  (ops item), then Phase 2 — see IMPROVEMENT_PLAN.md.
+  activities, 4 race-prediction days).
+- **2026-07-09 (same day): Phase 2 item 1 — HRV SWC method — built, awaiting
+  Trent's commit.** New `engine.hrv_swc` (ln-rMSSD 7d mean vs 60d baseline
+  shifted back 7d, z + band at +/-0.75 SD SWC / 1.5 SD alarm; far-above-band =
+  caution, not bonus). `daily_readiness`, `risk_flags` (new `HRV_ELEVATED`
+  yellow flag), and `generate_insights` use z; legacy `hrv_baseline_deviation`
+  % method kept ONLY as thin-history/flat-baseline fallback + under legacy
+  `readiness_score`. Verified on real 290d HRV history (263 scored days,
+  median z -0.05, sensible band counts). 193 tests. **NEXT UP:** droplet
+  365-day backfill (ops item), then Phase 2 item 2 (one load pipeline) — see
+  IMPROVEMENT_PLAN.md.
 - **Backfill status (corrected 2026-07-08):** the DEV machine DB already has
   **367 days** of daily data (290 d HRV, 119 activity days) — earlier "only 30
   days" notes were stale. Only the **droplet's** separate DB is still ~30 days;

@@ -6,7 +6,8 @@ Two user-facing outputs:
   a ranked list of *drivers* (which signals helped or hurt today). Every
   component and weight is visible; this is deliberately not Garmin's black box.
 * ``risk_flags`` — a heuristic overtraining / injury-risk engine that fires
-  named, evidence-backed flags: load spikes (ACWR), HRV suppression, elevated
+  named, evidence-backed flags: load spikes (ACWR), HRV outside the personal
+  band (suppressed, or unusually elevated — a saturation caution), elevated
   resting HR, monotony, sleep-debt-vs-load mismatch, rapid fitness ramp, and
   deeply negative form.
 
@@ -47,8 +48,12 @@ RHR_POINTS_PER_BPM = 8.0
 RHR_FLAG_BPM = 3.0  # yellow
 RHR_ALARM_BPM = 5.0  # red
 
-HRV_FLAG_PCT = -8.0  # yellow: 7d HRV this far below baseline
-HRV_ALARM_PCT = -12.0  # red
+HRV_FLAG_PCT = -8.0  # yellow: 7d HRV this far below baseline (legacy % fallback)
+HRV_ALARM_PCT = -12.0  # red (legacy % fallback)
+
+# z thresholds come from the SWC band itself (engine.HRV_SWC_BAND_SD /
+# HRV_SWC_ALARM_SD); the % constants above only serve histories too thin for a
+# banded baseline (~4 weeks), where hrv_swc returns null z.
 
 
 # -- resting HR ---------------------------------------------------------------
@@ -115,11 +120,14 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
         return {"available": False, "score": None, "band": "unknown", "drivers": []}
 
     last = daily.sort("day").tail(1).to_dicts()[0]
-    hrv_dev = _latest(ax.hrv_baseline_deviation(daily), "hrv_dev_pct")
+    hrv_z = _latest(ax.hrv_swc(daily), "hrv_z")
     rhr_dev = _latest(resting_hr_deviation(daily), "rhr_dev_bpm")
 
     components: dict[str, float] = {}
-    if hrv_dev is not None:
+    if hrv_z is not None:
+        components["hrv"] = _hrv_component_from_z(hrv_z)
+    elif (hrv_dev := _latest(ax.hrv_baseline_deviation(daily), "hrv_dev_pct")) is not None:
+        # Legacy % method: only for histories too thin for the SWC baseline.
         components["hrv"] = _clip(70.0 + hrv_dev * 3.0)
     if rhr_dev is not None:
         # Below baseline (negative dev) is good and tops out at 100.
@@ -153,6 +161,19 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
         "load_note": load_note,
         "recommendation": _readiness_reco(band, drivers),
     }
+
+
+def _hrv_component_from_z(z: float) -> float:
+    """Map the SWC z-score to a 0-100 readiness component.
+
+    Inside/below the band: 70 at baseline, 40 at the -1.5 SD alarm line, worse
+    below. Credit above baseline caps at the +0.75 SD band edge (85) — and far
+    ABOVE the band scores neutral (70), because unusually elevated HRV can be
+    parasympathetic saturation under deep fatigue, not a green light.
+    """
+    if z >= ax.HRV_SWC_ALARM_SD:
+        return 70.0
+    return _clip(70.0 + min(z, ax.HRV_SWC_BAND_SD) * 20.0)
 
 
 def _latest(df: pl.DataFrame, col: str) -> float | None:
@@ -295,31 +316,8 @@ def risk_flags(
                 )
             )
 
-    # 3. HRV suppression.
-    hrv_dev = _latest(ax.hrv_baseline_deviation(daily), "hrv_dev_pct")
-    if hrv_dev is not None:
-        if hrv_dev <= HRV_ALARM_PCT:
-            flags.append(
-                _flag(
-                    "HRV_SUPPRESSION",
-                    "red",
-                    "HRV is suppressed",
-                    f"7-day HRV is {abs(hrv_dev):.0f}% below your 60-day baseline "
-                    "(<=12% is a strong fatigue/illness signal). Take an easy day.",
-                    {"hrv_dev_pct": hrv_dev},
-                )
-            )
-        elif hrv_dev <= HRV_FLAG_PCT:
-            flags.append(
-                _flag(
-                    "HRV_SUPPRESSION",
-                    "yellow",
-                    "HRV dipping below baseline",
-                    f"7-day HRV is {abs(hrv_dev):.0f}% below baseline — an early sign of "
-                    "accumulated fatigue.",
-                    {"hrv_dev_pct": hrv_dev},
-                )
-            )
+    # 3. HRV vs the personal band — SWC method first, legacy % on thin history.
+    flags.extend(_hrv_flags(daily))
 
     # 4. Elevated resting HR.
     rhr_dev = _latest(resting_hr_deviation(daily), "rhr_dev_bpm")
@@ -369,6 +367,85 @@ def risk_flags(
 
     band = "red" if any(f["severity"] == "red" for f in flags) else ("yellow" if flags else "green")
     return {"risk_band": band, "flag_count": len(flags), "flags": flags}
+
+
+def _hrv_flags(daily: pl.DataFrame) -> list[dict[str, Any]]:
+    """HRV risk flags from the ln-rMSSD SWC band; legacy % method as fallback.
+
+    Below the band is graded suppression; far ABOVE the band fires a caution
+    (parasympathetic saturation can accompany deep fatigue), never a bonus.
+    """
+    swc = ax.hrv_swc(daily)
+    if not swc.is_empty():
+        last = swc.tail(1).to_dicts()[0]
+        z = _f(last.get("hrv_z"))
+        pct = _f(last.get("hrv_dev_pct"))
+        if z is not None and pct is not None:
+            if z <= -ax.HRV_SWC_ALARM_SD:
+                return [
+                    _flag(
+                        "HRV_SUPPRESSION",
+                        "red",
+                        "HRV is suppressed",
+                        f"7-day HRV is {abs(pct):.0f}% below your normal band "
+                        f"({z:.1f} SD vs your 60-day baseline) — a strong fatigue/illness "
+                        "signal. Take an easy day.",
+                        {"hrv_z": z, "hrv_dev_pct": pct},
+                    )
+                ]
+            if z <= -ax.HRV_SWC_BAND_SD:
+                return [
+                    _flag(
+                        "HRV_SUPPRESSION",
+                        "yellow",
+                        "HRV dipping below your band",
+                        f"7-day HRV is {abs(pct):.0f}% below your normal band "
+                        f"({z:.1f} SD) — an early sign of accumulated fatigue.",
+                        {"hrv_z": z, "hrv_dev_pct": pct},
+                    )
+                ]
+            if z >= ax.HRV_SWC_ALARM_SD:
+                return [
+                    _flag(
+                        "HRV_ELEVATED",
+                        "yellow",
+                        "HRV unusually far above baseline",
+                        f"7-day HRV is {pct:.0f}% above your normal band ({z:.1f} SD). "
+                        "Sustained values this far up can be parasympathetic saturation "
+                        "under deep fatigue — treat it as a caution, not a green light, "
+                        "especially if you feel flat.",
+                        {"hrv_z": z, "hrv_dev_pct": pct},
+                    )
+                ]
+            return []
+
+    # Legacy % fallback: history too thin (or too flat) for a banded baseline.
+    hrv_dev = _latest(ax.hrv_baseline_deviation(daily), "hrv_dev_pct")
+    if hrv_dev is None:
+        return []
+    if hrv_dev <= HRV_ALARM_PCT:
+        return [
+            _flag(
+                "HRV_SUPPRESSION",
+                "red",
+                "HRV is suppressed",
+                f"7-day HRV is {abs(hrv_dev):.0f}% below your 60-day baseline "
+                "(<=12% is a strong fatigue/illness signal). Take an easy day.",
+                {"hrv_dev_pct": hrv_dev},
+            )
+        ]
+    if hrv_dev <= HRV_FLAG_PCT:
+        return [
+            _flag(
+                "HRV_SUPPRESSION",
+                "yellow",
+                "HRV dipping below baseline",
+                f"7-day HRV is {abs(hrv_dev):.0f}% below baseline — an early sign of "
+                "accumulated fatigue.",
+                {"hrv_dev_pct": hrv_dev},
+            )
+        ]
+    return []
 
 
 def _flag(

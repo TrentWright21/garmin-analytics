@@ -329,6 +329,12 @@ class TestAnalytics:
         findings = ax.generate_insights(synthetic_daily(), pl.DataFrame())
         assert any("resting HR" in f for f in findings)
 
+    def test_insights_flags_hrv_suppression_via_swc(self) -> None:
+        hrv = [60 + (i % 7) - 3 for i in range(83)] + [46] * 7
+        df = synthetic_daily(90).with_columns(pl.Series("hrv_last_night_avg", hrv))
+        findings = ax.generate_insights(df, pl.DataFrame())
+        assert any("below your normal band" in f for f in findings)
+
 
 class TestApi:
     def test_routes_respond(self) -> None:

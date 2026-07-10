@@ -149,10 +149,12 @@ def monotony(load_by_day: pl.DataFrame) -> pl.DataFrame:
 
 
 def hrv_baseline_deviation(daily: pl.DataFrame) -> pl.DataFrame:
-    """7-day HRV vs personal 60-day baseline, in percent.
+    """7-day HRV vs personal 60-day baseline, in percent (LEGACY method).
 
-    Sustained deviation below ~ -8% is an earlier overtraining/illness signal
-    than Garmin's own status flag.
+    Kept as the fallback for thin history (``hrv_swc`` needs ~4 weeks) and for
+    the legacy ``readiness_score``. New consumers should prefer ``hrv_swc``,
+    which fixes this method's two flaws: raw-ms math on a log-normal quantity,
+    and a baseline that includes the very dip it is trying to detect.
     """
     if daily.is_empty() or "hrv_last_night_avg" not in daily.columns:
         return pl.DataFrame({"day": [], "hrv_dev_pct": []})
@@ -163,6 +165,72 @@ def hrv_baseline_deviation(daily: pl.DataFrame) -> pl.DataFrame:
     ).with_columns(
         hrv_dev_pct=((pl.col("hrv_7d") - pl.col("hrv_60d")) / pl.col("hrv_60d") * 100).round(1)
     )
+
+
+# Smallest-worthwhile-change band, in baseline SDs (Plews & Laursen / Buchheit):
+# a 7-day ln-rMSSD average inside baseline +/- 0.75 SD is normal day-to-day
+# variation; beyond 1.5 SD below is an alarm. Shared with the risk engine.
+HRV_SWC_BAND_SD = 0.75
+HRV_SWC_ALARM_SD = 1.5
+
+
+def hrv_swc(daily: pl.DataFrame) -> pl.DataFrame:
+    """HRV vs a self-referenced ln-rMSSD baseline band (smallest worthwhile change).
+
+    The state-of-practice method:
+
+    * work in ln(rMSSD) — HRV is log-normally distributed, so percent math on
+      raw milliseconds misreads the same change at different baselines;
+    * compare the 7-day rolling ln mean to a 60-day baseline that EXCLUDES the
+      most recent 7 days — otherwise this week's dip drags the baseline down
+      and partially hides itself;
+    * the normal band is baseline +/- 0.75 SD of its daily ln values (the
+      smallest worthwhile change); beyond 1.5 SD below is an alarm. Far ABOVE
+      the band is a caution too (parasympathetic saturation seen in deep
+      fatigue), not automatically good.
+
+    Returns ``day``, ``hrv_z`` (position in baseline SDs), ``hrv_dev_pct``
+    (geometric % vs the same baseline, for human-readable messages), and
+    ``hrv_band`` (suppressed | below | normal | above | elevated). ``hrv_z``
+    is null until ~4 weeks of history exist (or when the baseline has no
+    variance); callers fall back to ``hrv_baseline_deviation`` then.
+    """
+    if daily.is_empty() or "hrv_last_night_avg" not in daily.columns:
+        return pl.DataFrame({"day": [], "hrv_z": [], "hrv_dev_pct": [], "hrv_band": []})
+    df = (
+        daily.sort("day")
+        .with_columns(
+            ln=pl.when(pl.col("hrv_last_night_avg") > 0).then(
+                pl.col("hrv_last_night_avg").cast(pl.Float64).log()
+            )
+        )
+        .with_columns(
+            ln_7d=pl.col("ln").rolling_mean(7, min_samples=3),
+            base_mean=pl.col("ln").rolling_mean(60, min_samples=21).shift(7),
+            base_sd=pl.col("ln").rolling_std(60, min_samples=21).shift(7),
+        )
+        .with_columns(
+            hrv_z=(
+                (pl.col("ln_7d") - pl.col("base_mean"))
+                / pl.when(pl.col("base_sd") > 1e-6).then(pl.col("base_sd"))
+            ).round(2),
+            hrv_dev_pct=(((pl.col("ln_7d") - pl.col("base_mean")).exp() - 1) * 100).round(1),
+        )
+        .with_columns(
+            hrv_band=pl.when(pl.col("hrv_z").is_null())
+            .then(None)
+            .when(pl.col("hrv_z") <= -HRV_SWC_ALARM_SD)
+            .then(pl.lit("suppressed"))
+            .when(pl.col("hrv_z") <= -HRV_SWC_BAND_SD)
+            .then(pl.lit("below"))
+            .when(pl.col("hrv_z") >= HRV_SWC_ALARM_SD)
+            .then(pl.lit("elevated"))
+            .when(pl.col("hrv_z") >= HRV_SWC_BAND_SD)
+            .then(pl.lit("above"))
+            .otherwise(pl.lit("normal"))
+        )
+    )
+    return df.select("day", "hrv_z", "hrv_dev_pct", "hrv_band")
 
 
 # -- readiness ------------------------------------------------------------------
@@ -234,15 +302,27 @@ def generate_insights(daily: pl.DataFrame, activities: pl.DataFrame) -> list[str
                         f"higher than after nights under 7 hours."
                     )
 
-    # HRV trend flag
-    dev = hrv_baseline_deviation(df)
-    if not dev.is_empty():
-        recent = dev.tail(1).to_dicts()[0].get("hrv_dev_pct")
-        if recent is not None and recent <= -8:
+    # HRV trend flag: SWC band method first, legacy % fallback on thin history.
+    swc = hrv_swc(df)
+    swc_last = swc.tail(1).to_dicts()[0] if not swc.is_empty() else {}
+    z = swc_last.get("hrv_z")
+    if z is not None:
+        pct = swc_last.get("hrv_dev_pct")
+        if z <= -HRV_SWC_BAND_SD and pct is not None:
             findings.append(
-                f"Your 7-day HRV is {abs(recent):.0f}% below your 60-day baseline — "
-                f"a common early sign of accumulated fatigue. Consider an easy day."
+                f"Your 7-day HRV is {abs(pct):.0f}% below your normal band "
+                f"({z:.1f} SD vs your 60-day baseline) — a common early sign of "
+                f"accumulated fatigue. Consider an easy day."
             )
+    else:
+        dev = hrv_baseline_deviation(df)
+        if not dev.is_empty():
+            recent = dev.tail(1).to_dicts()[0].get("hrv_dev_pct")
+            if recent is not None and recent <= -8:
+                findings.append(
+                    f"Your 7-day HRV is {abs(recent):.0f}% below your 60-day baseline — "
+                    f"a common early sign of accumulated fatigue. Consider an easy day."
+                )
 
     # Temperature effect on runs
     if not activities.is_empty() and {"avg_temp_c", "distance_m", "duration_s"}.issubset(
