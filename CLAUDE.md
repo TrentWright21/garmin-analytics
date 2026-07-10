@@ -588,7 +588,11 @@ pipeline change — everything was already in `daily_metrics`, just not surfaced
   loaders at the bottom of `engine.py` bridge DB → Polars.
 - Adding a metric = one line in `endpoints.py` + mapping in `mappers.py` + test.
 - Quality gates before any commit: `ruff check`, `ruff format`, `mypy app` (strict),
-  `pytest` — all must pass. Tests live in `backend/tests/unit/`.
+  `pytest` — all must pass. Tests live in `backend/tests/unit/`. **Run mypy FROM
+  the `backend/` directory** (`cd backend; python -m mypy app`) — its config,
+  including the garminconnect/apscheduler missing-stub overrides, lives in
+  `backend/pyproject.toml`, so `mypy backend\app` from the repo root reports two
+  spurious import-untyped errors. Frontend gate: `cd frontend; npm run build`.
 - Be gentle with Garmin's API: keep inter-call pauses, never hammer on 429
   (user already saw login rate-limiting once).
 - User context that shapes features: he's a runner (Hartselle, AL — hot summers,
