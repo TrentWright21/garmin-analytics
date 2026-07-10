@@ -165,6 +165,28 @@ is cached locally. Don't open a run's map and no tiles are ever requested — se
 
 ---
 
+## Metric insights (local, with optional AI)
+
+Tap any metric on the dashboard to open its **detail page** — current value,
+history with 7d/30d/90d/6mo/1yr ranges, your personal normal range, and
+**local insights** computed from your own data: baseline deviations, streaks,
+outliers, and *measured* correlations with related metrics (e.g. HRV vs resting
+HR and sleep). These are **always free and fully local — no AI, no key needed.**
+
+Optionally, a **"Generate deeper AI analysis"** button adds a short
+natural-language summary. It's **off by default** and cost-controlled by design:
+
+- Enable it in `config/config.yaml` under `ai_insights:` (`enabled: true`); it
+  reuses your existing `GA_ANTHROPIC_API_KEY`.
+- It uses a **cheap model** (Claude Haiku), a strict output-token ceiling, an
+  ~18-hour **cache** (the same request never pays twice), a **hard per-day call
+  cap**, and a minimum-history gate — all tunable in that config block.
+- Nothing is sent unless you enable it **and** press the button, and only
+  compact metric *summaries* (never raw daily records) are sent. Same privacy
+  model as the AI Coach — see [SECURITY.md](SECURITY.md).
+
+---
+
 ## Troubleshooting
 
 **"database is locked" or weird sync failures on Windows**

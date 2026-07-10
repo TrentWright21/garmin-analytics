@@ -34,9 +34,13 @@ export interface ActivityRow {
   avg_temp_c: number | null;
   training_load: number | null;
   vo2max: number | null;
+  aerobic_te: number | null;
+  anaerobic_te: number | null;
+  te_label: string | null;
+  avg_speed_mps: number | null;
 }
 
-export interface MetricCard {
+export interface MetricCardData {
   key: string;
   label: string;
   unit: string;
@@ -148,6 +152,11 @@ export interface PacePlan {
   headline: string;
   mileage_start: number;
   mileage_peak: number;
+  mileage_target_peak: number;
+  volume_limited: boolean;
+  volume_note: string;
+  long_run_peak: number;
+  taper_weeks: number;
   goal_paces: Record<string, Pace>;
   current_paces: Record<string, Pace>;
   races_available: string[];
@@ -206,6 +215,154 @@ export interface IntensityDistribution {
   verdict?: string;
 }
 
+export interface RacePredictionPoint {
+  day: string;
+  time_5k_s: number | null;
+  time_10k_s: number | null;
+  time_half_s: number | null;
+  time_marathon_s: number | null;
+}
+
+export interface RacePredictions {
+  available: boolean;
+  as_of?: string;
+  baseline_day?: string;
+  baseline_span_days?: number;
+  latest?: Record<string, number | null>;
+  deltas_s?: Record<string, number | null>;
+  series?: RacePredictionPoint[];
+}
+
+export interface PersonalRecord {
+  type_id: number;
+  label: string;
+  category: string; // running | cycling | steps
+  kind: string; // time | distance | ascent | count
+  value: number;
+  date: string | null;
+  activity_id: number | null;
+  activity_name: string | null;
+}
+
+export interface MetricRelationship {
+  key: string;
+  label: string;
+  r: number;
+  n: number;
+  interpretation: string;
+}
+
+export interface MetricDetailData {
+  available: boolean;
+  key: string;
+  label?: string;
+  unit?: string;
+  direction?: string; // higher-better | lower-better | neutral
+  range_days?: number;
+  current?: number | null;
+  as_of?: string;
+  status?: Status;
+  delta?: { pct: number | null; vs: string };
+  stats?: { avg: number | null; min: number | null; max: number | null; trend: string };
+  baseline?: {
+    avg30: number | null;
+    z: number | null;
+    normal: { low: number; high: number } | null;
+  };
+  series?: { day: string; value: number | null }[];
+  insights?: string[];
+  relationships?: MetricRelationship[];
+  chart_summary?: string;
+}
+
+export interface AiInsight {
+  enabled: boolean;
+  can_generate: boolean;
+  available: boolean;
+  source?: "cached" | "generated" | null;
+  insight?: string | null;
+  model?: string | null;
+  generated_at?: string | null;
+  reason?: string | null; // disabled | thin_history | daily_limit | error | ...
+}
+
+export interface GoalPlanWeek {
+  week: number;
+  week_start: string;
+  phase: string; // Base | Build | Peak | Taper
+  status: string; // elapsed | current | upcoming
+  target_miles: number;
+  target_vert_ft: number;
+  long_effort: string;
+  actual_miles?: number | null;
+  actual_vert_ft?: number | null;
+}
+
+export interface GoalPlan {
+  available: boolean;
+  event?: {
+    name: string;
+    date: string;
+    kind: string;
+    days_until: number;
+    weeks_until: number;
+    is_past: boolean;
+    vert_gain_ft: number;
+  };
+  plan_weeks?: number;
+  taper_weeks?: number;
+  peak_miles?: number;
+  peak_vert_ft?: number;
+  this_week?: {
+    phase: string;
+    target_miles: number;
+    target_vert_ft: number;
+    long_effort: string;
+  } | null;
+  adherence?: {
+    available: boolean;
+    miles_pct?: number;
+    vert_ft_pct?: number;
+    weeks_scored?: number;
+    status?: string; // on-track | building | behind
+    headline?: string;
+  };
+  weeks?: GoalPlanWeek[];
+}
+
+export interface WeeklyVolumeRow {
+  week: string;
+  sessions: number;
+  miles?: number | null;
+  vert_ft?: number | null;
+  hours?: number | null;
+  z1_min?: number | null;
+  z2_min?: number | null;
+  z3_min?: number | null;
+  z4_min?: number | null;
+  z5_min?: number | null;
+}
+
+export interface LoadFocusBucket {
+  key: string;
+  label: string;
+  load: number | null;
+  target_min: number | null;
+  target_max: number | null;
+  verdict: "below" | "within" | "above" | null;
+}
+
+export interface TrainingSummary {
+  weeks: WeeklyVolumeRow[];
+  garmin: {
+    available: boolean;
+    as_of?: string | null;
+    status?: string | null;
+    balance_phrase?: string | null;
+    focus?: LoadFocusBucket[];
+  };
+}
+
 export interface ReadinessV2 {
   available: boolean;
   score: number | null;
@@ -215,8 +372,14 @@ export interface ReadinessV2 {
   load_penalty?: number;
   load_note?: string | null;
   sleep_debt_7d_h?: number | null;
+  stress_source?: string | null; // latest | yesterday | today_partial
   garmin_training_readiness?: number | null;
   recommendation?: string;
+}
+
+export interface ReadinessHistory {
+  available: boolean;
+  days: { day: string; score: number; band: string }[];
 }
 
 export interface RiskFlag {
@@ -504,13 +667,25 @@ export const api = {
     get<{ acwr: Record<string, number>[]; monotony: Record<string, number>[] }>(
       `/analytics/training-load?days=${days}`,
     ),
-  metrics: (days = 90) => get<{ cards: MetricCard[] }>(`/coach/metrics?days=${days}`),
+  metrics: (days = 90) => get<{ cards: MetricCardData[] }>(`/coach/metrics?days=${days}`),
   sleep: (days = 120) => get<SleepReport>(`/coach/sleep?days=${days}`),
   fitness: () => get<Fitness>(`/coach/fitness`),
   fitnessPmc: (days = 180) => get<FitnessPmc>(`/analytics/fitness?days=${days}`),
   vo2max: () => get<Vo2maxTrend>(`/analytics/vo2max`),
   intensity: (days = 42) => get<IntensityDistribution>(`/analytics/intensity?days=${days}`),
   readinessV2: () => get<ReadinessV2>(`/analytics/readiness-v2`),
+  readinessHistory: (days = 30) => get<ReadinessHistory>(`/analytics/readiness-history?days=${days}`),
+  trainingSummary: (weeks = 12) => get<TrainingSummary>(`/analytics/training-summary?weeks=${weeks}`),
+  racePredictions: (days = 365) => get<RacePredictions>(`/analytics/race-predictions?days=${days}`),
+  personalRecords: () => get<{ records: PersonalRecord[] }>(`/personal-records`),
+  goalPlan: () => get<GoalPlan>(`/goal-plan`),
+  metricDetail: (key: string, days = 90) =>
+    get<MetricDetailData>(`/metric/${key}/detail?days=${days}`),
+  // Tier 2/3: GET reads cache only (no spend); POST is the explicit button.
+  aiInsightGet: (key: string, days = 90) =>
+    get<AiInsight>(`/metric/${key}/ai-insight?days=${days}`),
+  aiInsightGenerate: (key: string, days = 90) =>
+    request<AiInsight>(`/metric/${key}/ai-insight?days=${days}`, { method: "POST" }),
   risk: () => get<RiskReport>(`/analytics/risk`),
   briefing: () => get<Briefing>(`/briefing`),
   todayWorkout: () => get<TodayWorkout>(`/briefing/workout`),

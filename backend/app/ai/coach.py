@@ -273,7 +273,7 @@ def get_readiness_detail() -> str:
     start, end = _range(90)
     daily = ax.load_daily(start, end)
     load = ax.load_training_load(start, end)
-    return _js(readiness.daily_readiness(daily, load))
+    return _js(readiness.daily_readiness(daily, load, today=end))
 
 
 def get_risk_flags() -> str:

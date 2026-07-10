@@ -14,8 +14,10 @@ import { shortDate } from "../lib/format";
 import { useLayoutMode } from "../lib/layoutMode";
 
 // Resolved light-mode hexes (SVG presentation attributes don't resolve CSS var()).
-// Series + status are the dataviz validated LIGHT column; chrome is the cool-grey
-// scale from theme.css so charts sit flush on white card surfaces.
+// Series stay the dataviz validated LIGHT column (kept for multi-series
+// legibility + CVD separation); `brand`/`jet`/`accent` carry the Blue Whale /
+// Jet Stream identity for single-series emphasis, fills, and chart chrome.
+// Mirror of theme.css tokens — keep the two in sync.
 export const COLORS = {
   s1: "#2a78d6",
   s2: "#1baf7a",
@@ -25,14 +27,19 @@ export const COLORS = {
   s6: "#e34948",
   s7: "#e87ba4",
   s8: "#eb6834",
-  good: "#0ca30c",
+  // Blue Whale / Jet Stream emphasis (hybrid: single-series + chrome + accents)
+  brand: "#03363d",
+  brandSoft: "#2e7e88",
+  jet: "#bdd9d7",
+  jetWeak: "#d6e7e5",
+  good: "#1f9d6b",
   warning: "#fab219",
   serious: "#ec835a",
   critical: "#d03b3b",
-  grid: "#eaecf0",
-  baseline: "#d0d5dd",
-  muted: "#667085",
-  ink2: "#475467",
+  grid: "#e0eae8",
+  baseline: "#c2d5d2",
+  muted: "#587074",
+  ink2: "#3d5459",
 };
 
 export const SERIES_HEX = [
@@ -85,6 +92,22 @@ export function ChartTooltip({
             {fmt ? fmt(p.value, String(p.dataKey)) : p.value}
           </b>
         </div>
+      ))}
+    </div>
+  );
+}
+
+// Colored-dot chart legend. Replaces the repeated `row wrap + tt-dot` markup
+// that every multi-series chart hand-rolled; labels are ReactNode so callers
+// can pass richer content (e.g. a band legend with day counts).
+export function ChartLegend({ items }: { items: { label: ReactNode; color: string }[] }) {
+  return (
+    <div className="chart-legend">
+      {items.map((it, i) => (
+        <span key={i} className="row" style={{ gap: 6 }}>
+          <span className="tt-dot" style={{ background: it.color }} />
+          {it.label}
+        </span>
       ))}
     </div>
   );

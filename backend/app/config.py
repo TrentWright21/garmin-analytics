@@ -90,6 +90,24 @@ class AthleteConfig(BaseModel):
     hr_rest: int | None = Field(default=None, ge=25, le=100)
 
 
+class AiInsightConfig(BaseModel):
+    """Tier-2/3 AI metric insights (redesign). **OFF by default** — the local
+    Tier-1 engine always works without it. Only when ``enabled`` AND a
+    ``GA_ANTHROPIC_API_KEY`` is set can the metric-detail view produce a cached,
+    cost-capped natural-language summary, and only on an explicit button press.
+
+    Every knob here is a cost control: a cheap model, a hard daily call cap, a
+    reuse cache, a strict output-token ceiling, and a minimum-history gate.
+    """
+
+    enabled: bool = False
+    model: str = "claude-haiku-4-5-20251001"  # cheap by design; not Opus
+    max_output_tokens: int = Field(default=320, ge=64, le=1024)
+    cache_hours: int = Field(default=18, ge=1, le=168)  # reuse before regenerating
+    max_calls_per_day: int = Field(default=25, ge=0)  # hard ceiling; 0 disables
+    min_days: int = Field(default=14, ge=1)  # refuse thin history
+
+
 class EventConfig(BaseModel):
     """A goal event to count down to. Deliberately generic — a summit hike, a
     marathon, a 5K, or anything with a date all fit.
@@ -103,6 +121,8 @@ class EventConfig(BaseModel):
     kind: Literal["race", "climb", "hike", "other"] = "other"
     distance_m: float | None = None
     goal_time: str | None = None  # "3:30:00" for a race target; null for a climb
+    vert_gain_ft: float | None = None  # summit-day elevation gain; anchors the
+    # goal plan's weekly vert targets (e.g. Mount Whitney's ~6,100 ft day hike)
 
 
 class AppConfig(BaseModel):
@@ -117,6 +137,7 @@ class AppConfig(BaseModel):
     notify: NotifyConfig = NotifyConfig()
     goal: GoalConfig = GoalConfig()
     athlete: AthleteConfig = AthleteConfig()
+    ai_insights: AiInsightConfig = AiInsightConfig()
     # Extra browser origins allowed to call the API cross-origin (prod). Empty is
     # the safe default for a same-origin deploy (dashboard served by FastAPI). The
     # Vite dev server origin is always allowed in dev; see main.py.

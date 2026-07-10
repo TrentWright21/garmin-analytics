@@ -9,24 +9,23 @@ import { useLayoutMode } from "./lib/layoutMode";
 import Activities from "./pages/Activities";
 import Briefing from "./pages/Briefing";
 import Coach from "./pages/Coach";
-import Fitness from "./pages/Fitness";
+import MetricDetail from "./pages/MetricDetail";
 import More from "./pages/mobile/More";
 import Today from "./pages/mobile/Today";
 import Overview from "./pages/Overview";
-import PaceCoach from "./pages/PaceCoach";
+import Progress from "./pages/Progress";
 import SleepCoach from "./pages/SleepCoach";
-import TrainingLoad from "./pages/TrainingLoad";
+import Training from "./pages/Training";
 import Trends from "./pages/Trends";
 
 const NAV = [
   { to: "/briefing", icon: "briefing", label: "Daily Briefing" },
   { to: "/overview", icon: "overview", label: "Overview" },
-  { to: "/fitness", icon: "fitness", label: "Fitness & Form" },
-  { to: "/coach", icon: "coach", label: "AI Coach" },
+  { to: "/training", icon: "fitness", label: "Training" },
+  { to: "/progress", icon: "load", label: "Progress" },
+  { to: "/coach", icon: "coach", label: "Coach" },
   { to: "/sleep", icon: "sleep", label: "Sleep Coach" },
-  { to: "/pace", icon: "pace", label: "Pace Coach" },
   { to: "/trends", icon: "trends", label: "Trends" },
-  { to: "/load", icon: "load", label: "Training Load" },
   { to: "/activities", icon: "activities", label: "Activities" },
 ] as const;
 
@@ -34,7 +33,7 @@ const NAV = [
 // reachable under More — reorganized, never hidden.
 const MOBILE_TABS = [
   { to: "/today", icon: "briefing", label: "Today" },
-  { to: "/fitness", icon: "fitness", label: "Training" },
+  { to: "/training", icon: "fitness", label: "Training" },
   { to: "/activities", icon: "activities", label: "Activity" },
   { to: "/coach", icon: "coach", label: "Coach" },
   { to: "/more", icon: "menu", label: "More" },
@@ -57,6 +56,9 @@ function DesktopShell({ syncState, syncMessage, onSync, authRequired, onLogout }
 
   return (
     <div className="app">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
       {/* Narrow-window top bar (desktop mode on a small window; hidden wide) */}
       <header className="topnav">
         <button className="hamburger" onClick={() => setNavOpen(true)} aria-label="Open menu">
@@ -111,18 +113,24 @@ function DesktopShell({ syncState, syncMessage, onSync, authRequired, onLogout }
 
       {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
-      <main className="main">
+      <main className="main" id="main">
         <Routes>
           <Route path="/" element={<Navigate to="/briefing" replace />} />
           <Route path="/briefing" element={<Briefing />} />
           <Route path="/overview" element={<Overview />} />
-          <Route path="/fitness" element={<Fitness />} />
+          <Route path="/training" element={<Training />} />
+          {/* Old bookmarks: Fitness & Form and Training Load merged into Training. */}
+          <Route path="/fitness" element={<Navigate to="/training" replace />} />
+          <Route path="/load" element={<Navigate to="/training" replace />} />
+          <Route path="/progress" element={<Progress />} />
           <Route path="/coach" element={<Coach />} />
+          <Route path="/coach/pace" element={<Coach tab="pace" />} />
+          {/* Old bookmark: Pace Coach is now a tab inside Coach. */}
+          <Route path="/pace" element={<Navigate to="/coach/pace" replace />} />
           <Route path="/sleep" element={<SleepCoach />} />
-          <Route path="/pace" element={<PaceCoach />} />
           <Route path="/trends" element={<Trends />} />
-          <Route path="/load" element={<TrainingLoad />} />
           <Route path="/activities" element={<Activities />} />
+          <Route path="/metric/:key" element={<MetricDetail />} />
           <Route path="*" element={<Navigate to="/briefing" replace />} />
         </Routes>
       </main>
@@ -135,6 +143,9 @@ function DesktopShell({ syncState, syncMessage, onSync, authRequired, onLogout }
 function MobileShell({ syncState, syncMessage, onSync, authRequired, onLogout }: ShellProps) {
   return (
     <div className="m-app">
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
       <header className="m-header">
         <div className="brand-mark">
           <Icon name="load" size={16} />
@@ -146,9 +157,11 @@ function MobileShell({ syncState, syncMessage, onSync, authRequired, onLogout }:
         <Routes>
           <Route path="/" element={<Navigate to="/today" replace />} />
           <Route path="/today" element={<Today />} />
-          <Route path="/fitness" element={<Fitness />} />
+          <Route path="/training" element={<Training />} />
+          <Route path="/fitness" element={<Navigate to="/training" replace />} />
           <Route path="/activities" element={<Activities />} />
           <Route path="/coach" element={<Coach />} />
+          <Route path="/coach/pace" element={<Coach tab="pace" />} />
           <Route
             path="/more"
             element={
@@ -164,10 +177,12 @@ function MobileShell({ syncState, syncMessage, onSync, authRequired, onLogout }:
           {/* Deeper pages, reachable from More — same components as desktop. */}
           <Route path="/briefing" element={<Briefing />} />
           <Route path="/overview" element={<Overview />} />
+          <Route path="/progress" element={<Progress />} />
           <Route path="/sleep" element={<SleepCoach />} />
-          <Route path="/pace" element={<PaceCoach />} />
+          <Route path="/pace" element={<Navigate to="/coach/pace" replace />} />
           <Route path="/trends" element={<Trends />} />
-          <Route path="/load" element={<TrainingLoad />} />
+          <Route path="/load" element={<Navigate to="/training" replace />} />
+          <Route path="/metric/:key" element={<MetricDetail />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </Routes>
       </main>

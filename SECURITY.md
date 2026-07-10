@@ -79,6 +79,19 @@ Chat history is stored locally in `data/garmin.db` (the `conversations` and
 `messages` tables) and is erased by the reset scripts along with everything
 else.
 
+**AI metric insights** (the optional "Generate deeper AI analysis" button on
+metric detail pages) follow the same model, and add extra cost controls. They
+are **off by default** even with a key set — you must also set
+`ai_insights.enabled: true` in `config/config.yaml`. When on, a summary is
+generated only when you press the button; the app sends a compact metric
+*summary* (label, current value, stats, and the local insights — never raw
+daily records) to a cheap model (Claude Haiku), with a strict output limit, an
+~18-hour cache, and a hard per-day call cap. Every request is recorded in a
+local `ai_usage_log` table (metric, time, whether it was local/cached/generated,
+model, token counts, error) so you can audit spend; no raw health values are
+stored there. The free **local** insights need no key and never leave your
+machine.
+
 ## Run maps and OpenStreetMap
 
 When you open a workout's detail and it has GPS, the app shows the route on a

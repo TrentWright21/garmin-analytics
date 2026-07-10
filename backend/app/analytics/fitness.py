@@ -21,6 +21,7 @@ with synthetic load series.
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 from typing import Any
 
 import polars as pl
@@ -286,3 +287,113 @@ def intensity_distribution(activities: pl.DataFrame, hr_max: float | None = None
         "anaerobic_pct": anaerobic,
         "verdict": verdict,
     }
+
+
+_RACE_COLS = ("time_5k_s", "time_10k_s", "time_half_s", "time_marathon_s")
+
+
+def race_prediction_trend(preds: pl.DataFrame, baseline_days: int = 30) -> dict[str, Any]:
+    """Garmin's race-time predictions: latest values, deltas, and the full series.
+
+    ``preds`` is the ``race_predictions`` frame (one row per day). Deltas
+    compare the latest row against a baseline — the newest row at least
+    ``baseline_days`` older, else the oldest available — so a thin history
+    still yields an honest comparison; ``baseline_span_days`` says how far back
+    it actually reached. Negative delta = the predicted time got faster.
+    """
+    if preds.is_empty():
+        return {"available": False}
+    df = preds.sort("day")
+    last = df.tail(1).to_dicts()[0]
+    older = df.filter(pl.col("day") <= last["day"] - timedelta(days=baseline_days))
+    base = (older.tail(1) if not older.is_empty() else df.head(1)).to_dicts()[0]
+
+    deltas: dict[str, int | None] = {}
+    for col in _RACE_COLS:
+        latest_s, base_s = _f(last.get(col)), _f(base.get(col))
+        deltas[col] = (
+            round(latest_s - base_s) if latest_s is not None and base_s is not None else None
+        )
+
+    return {
+        "available": True,
+        "as_of": str(last["day"]),
+        "baseline_day": str(base["day"]),
+        "baseline_span_days": (last["day"] - base["day"]).days,
+        "latest": {c: last.get(c) for c in _RACE_COLS},
+        "deltas_s": deltas,
+        "series": df.to_dicts(),
+    }
+
+
+# Load Focus buckets in Garmin's display order, with the DailyMetrics column
+# stems they were normalized into.
+_FOCUS_BUCKETS = (
+    ("anaerobic", "Anaerobic", "load_anaerobic"),
+    ("aerobic_high", "High aerobic", "load_aerobic_high"),
+    ("aerobic_low", "Low aerobic", "load_aerobic_low"),
+)
+
+
+def garmin_load_focus(daily: pl.DataFrame) -> dict[str, Any]:
+    """Garmin's Load Focus + Training Status verdicts, straight from the watch.
+
+    A labeled cross-check next to our own load model (like
+    ``garmin_training_readiness`` in the readiness output): the 4-week load in
+    Garmin's anaerobic / high-aerobic / low-aerobic buckets against its
+    personalized target ranges, each graded below/within/above, plus the
+    training-status feedback phrase (e.g. "UNPRODUCTIVE_5" -> "Unproductive").
+    """
+    if daily.is_empty() or "load_aerobic_low" not in daily.columns:
+        return {"available": False}
+    rows = daily.sort("day").filter(pl.col("load_aerobic_low").is_not_null())
+    status_rows = (
+        daily.sort("day").filter(pl.col("training_status").is_not_null())
+        if "training_status" in daily.columns
+        else pl.DataFrame()
+    )
+    status = status_rows.tail(1).to_dicts()[0] if not status_rows.is_empty() else {}
+    if rows.is_empty():
+        return {
+            "available": bool(status),
+            "as_of": str(status["day"]) if status else None,
+            "status": _status_phrase(status.get("training_status")),
+            "balance_phrase": None,
+            "focus": [],
+        }
+    last = rows.tail(1).to_dicts()[0]
+
+    focus = []
+    for key, label, stem in _FOCUS_BUCKETS:
+        load = _f(last.get(stem))
+        lo = _f(last.get(f"{stem}_target_min"))
+        hi = _f(last.get(f"{stem}_target_max"))
+        verdict = None
+        if load is not None and lo is not None and hi is not None:
+            verdict = "below" if load < lo else "above" if load > hi else "within"
+        focus.append(
+            {
+                "key": key,
+                "label": label,
+                "load": round(load, 0) if load is not None else None,
+                "target_min": lo,
+                "target_max": hi,
+                "verdict": verdict,
+            }
+        )
+
+    return {
+        "available": True,
+        "as_of": str(last["day"]),
+        "status": _status_phrase(status.get("training_status")),
+        "balance_phrase": _status_phrase(last.get("load_balance_phrase")),
+        "focus": focus,
+    }
+
+
+def _status_phrase(raw: Any) -> str | None:
+    """ "UNPRODUCTIVE_5" / "BALANCED" -> "Unproductive" / "Balanced"."""
+    if not raw:
+        return None
+    words = [w for w in str(raw).split("_") if w and not w.isdigit()]
+    return " ".join(words).capitalize() if words else None

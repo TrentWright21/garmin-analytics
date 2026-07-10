@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 import app.db.engine as db
 from app.analytics import engine as ax
 from app.analytics import fitness, physiology, readiness, session
-from app.db.models.core import Activity, DailyMetrics
+from app.db.models.core import Activity, DailyMetrics, RacePrediction
 
 
 @pytest.fixture(autouse=True)
@@ -285,6 +285,133 @@ def test_readiness_sleep_component_blends_seven_night_debt() -> None:
     assert tired["sleep_debt_7d_h"] > rested["sleep_debt_7d_h"]
 
 
+def test_readiness_history_replays_daily_scores() -> None:
+    frame = daily_frame(70)
+    hist = readiness.readiness_history(frame, days=10)
+    assert hist["available"] is True
+    assert len(hist["days"]) == 10
+    assert all(d["band"] in {"green", "yellow", "red"} for d in hist["days"])
+    # The final history entry IS the headline score — same inputs, same math.
+    assert hist["days"][-1]["score"] == readiness.daily_readiness(frame)["score"]
+    assert hist["days"][-1]["day"] == str(START + timedelta(days=69))
+    assert readiness.readiness_history(pl.DataFrame()) == {"available": False, "days": []}
+
+
+def test_readiness_stress_scores_yesterday_when_latest_row_is_today() -> None:
+    # avg_stress is day-cumulative: at 06:30 today's row covers overnight only
+    # and reads artificially calm (review finding D4). With `today` passed, the
+    # stress component must come from yesterday's complete day.
+    today = START + timedelta(days=69)
+    frame = daily_frame(70).with_columns(
+        pl.when(pl.col("day") == today).then(5).otherwise(pl.col("avg_stress")).alias("avg_stress")
+    )
+    aware = readiness.daily_readiness(frame, today=today)
+    assert aware["stress_source"] == "yesterday"
+    assert aware["components"]["stress"] == 70  # yesterday's 30, not overnight's 5
+    assert any(d["key"] == "stress" and "yesterday" in d["label"] for d in aware["drivers"])
+
+    # Without `today` (historical frames, existing callers) behavior is unchanged.
+    naive = readiness.daily_readiness(frame)
+    assert naive["stress_source"] == "latest"
+    assert naive["components"]["stress"] == 95
+
+    # Latest row already a complete past day -> used as-is.
+    settled = readiness.daily_readiness(frame, today=today + timedelta(days=1))
+    assert settled["stress_source"] == "latest"
+
+
+def test_readiness_stress_falls_back_to_labeled_partial_without_yesterday() -> None:
+    today = START + timedelta(days=69)
+    frame = daily_frame(70).with_columns(
+        pl.when(pl.col("day") == today).then(5).otherwise(None).alias("avg_stress")
+    )
+    out = readiness.daily_readiness(frame, today=today)
+    assert out["stress_source"] == "today_partial"
+    assert out["components"]["stress"] == 95
+    assert any(d["key"] == "stress" and "today so far" in d["label"] for d in out["drivers"])
+
+
+def test_weekly_volume_buckets_by_monday_week_in_imperial() -> None:
+    monday = date(2026, 1, 5)  # a Monday
+    acts = pl.DataFrame(
+        {
+            "day": [monday, monday + timedelta(days=2), monday + timedelta(days=7)],
+            "distance_m": [8046.7, 1609.34, 16093.4],
+            "elevation_gain_m": [30.48, None, 304.8],
+            "duration_s": [3600.0, 1800.0, 7200.0],
+            "zone_1_s": [600.0, None, 0.0],
+            "zone_2_s": [2400.0, None, 3600.0],
+            "zone_3_s": [300.0, None, 0.0],
+            "zone_4_s": [300.0, None, 3600.0],
+            "zone_5_s": [0.0, None, 0.0],
+        }
+    )
+    out = ax.weekly_volume(acts)
+    assert out.height == 2
+    w1, w2 = out.to_dicts()
+    assert w1["week"] == monday and w1["sessions"] == 2
+    assert w1["miles"] == pytest.approx(6.0, abs=0.05)
+    assert w1["vert_ft"] == 100
+    assert w1["hours"] == 1.5
+    assert w1["z2_min"] == 40  # the zone-less session contributes nothing
+    assert w2["week"] == monday + timedelta(days=7) and w2["z4_min"] == 60
+    assert ax.weekly_volume(pl.DataFrame()).is_empty()
+
+
+def test_race_prediction_trend_deltas_and_baseline_selection() -> None:
+    days = [START + timedelta(days=i) for i in (0, 20, 45)]
+    preds = pl.DataFrame(
+        {
+            "day": days,
+            "time_5k_s": [1500, 1490, 1470],
+            "time_10k_s": [3300, 3280, 3250],
+            "time_half_s": [7600, None, 7450],
+            "time_marathon_s": [17000, 16900, 16800],
+        }
+    )
+    out = fitness.race_prediction_trend(preds)
+    assert out["available"] is True
+    assert out["as_of"] == str(START + timedelta(days=45))
+    # Baseline = newest row >= 30 days older than the latest: day 0 (day 20 is
+    # only 25 days back). Negative delta = the prediction got faster.
+    assert out["baseline_day"] == str(START)
+    assert out["baseline_span_days"] == 45
+    assert out["deltas_s"]["time_5k_s"] == -30
+    assert out["deltas_s"]["time_half_s"] == -150
+    assert len(out["series"]) == 3
+
+    single = fitness.race_prediction_trend(preds.tail(1))
+    assert single["baseline_span_days"] == 0 and single["deltas_s"]["time_5k_s"] == 0
+    assert fitness.race_prediction_trend(pl.DataFrame()) == {"available": False}
+
+
+def test_garmin_load_focus_grades_buckets_and_prettifies_phrases() -> None:
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(3)]
+    daily = pl.DataFrame(
+        {
+            "day": days,
+            "training_status": [None, "UNPRODUCTIVE_5", None],
+            "load_aerobic_low": [None, None, 100.0],
+            "load_aerobic_high": [None, None, 500.0],
+            "load_anaerobic": [None, None, 38.0],
+            "load_aerobic_low_target_min": [None, None, 143],
+            "load_aerobic_low_target_max": [None, None, 354],
+            "load_aerobic_high_target_min": [None, None, 243],
+            "load_aerobic_high_target_max": [None, None, 454],
+            "load_anaerobic_target_min": [None, None, 0],
+            "load_anaerobic_target_max": [None, None, 211],
+            "load_balance_phrase": [None, None, "BALANCED"],
+        }
+    )
+    out = fitness.garmin_load_focus(daily)
+    assert out["available"] is True
+    assert out["status"] == "Unproductive"  # latest non-null phrase, prettified
+    assert out["balance_phrase"] == "Balanced"
+    by_key = {f["key"]: f["verdict"] for f in out["focus"]}
+    assert by_key == {"anaerobic": "within", "aerobic_high": "above", "aerobic_low": "below"}
+    assert fitness.garmin_load_focus(pl.DataFrame()) == {"available": False}
+
+
 def test_intensity_distribution_prefers_real_zone_seconds() -> None:
     acts = pl.DataFrame(
         {
@@ -481,12 +608,75 @@ def test_api_fitness_readiness_risk_intensity() -> None:
     body = f.json()
     assert "summary" in body and "series" in body
 
-    for path in ("/api/analytics/readiness-v2", "/api/analytics/risk", "/api/analytics/vo2max"):
+    for path in (
+        "/api/analytics/readiness-v2",
+        "/api/analytics/readiness-history",
+        "/api/analytics/risk",
+        "/api/analytics/vo2max",
+    ):
         r = c.get(path)
         assert r.status_code == 200, path
 
     i = c.get("/api/analytics/intensity", params={"days": 3650})
     assert i.status_code == 200
+
+    ts = c.get("/api/analytics/training-summary", params={"weeks": 52})
+    assert ts.status_code == 200
+    body = ts.json()
+    assert "weeks" in body and "garmin" in body
+
+    md = c.get("/api/metric/sleep_score/detail", params={"days": 365})
+    assert md.status_code == 200
+    detail = md.json()
+    assert detail["available"] is True
+    assert detail["key"] == "sleep_score" and "series" in detail and "insights" in detail
+    assert c.get("/api/metric/not_a_metric/detail").json()["available"] is False
+
+    gp = c.get("/api/goal-plan")
+    assert gp.status_code == 200
+    plan = gp.json()
+    # config.yaml carries the Whitney event, so a real plan comes back.
+    assert plan["available"] is True
+    assert plan["event"]["name"] and isinstance(plan["weeks"], list) and plan["weeks"]
+    assert all("target_vert_ft" in w and "phase" in w for w in plan["weeks"])
+
+
+def test_api_race_predictions_and_personal_records() -> None:
+    seed_db()
+    today = date.today()
+    with db.session_scope() as s:
+        for days_ago, t5 in ((40, 1500), (5, 1470)):
+            s.merge(
+                RacePrediction(
+                    day=today - timedelta(days=days_ago),
+                    time_5k_s=t5,
+                    time_10k_s=t5 * 2 + 300,
+                    time_half_s=t5 * 5,
+                    time_marathon_s=t5 * 11,
+                )
+            )
+        db.store_raw(
+            s,
+            "personal_records",
+            None,
+            [
+                {
+                    "typeId": 3,
+                    "value": 1406.6,
+                    "activityStartDateTimeLocalFormatted": "2025-11-22T07:03:12.0",
+                }
+            ],
+        )
+    c = _client()
+    rp = c.get("/api/analytics/race-predictions")
+    assert rp.status_code == 200
+    body = rp.json()
+    assert body["available"] is True
+    assert body["deltas_s"]["time_5k_s"] == -30
+
+    pr = c.get("/api/personal-records")
+    assert pr.status_code == 200
+    assert pr.json()["records"][0]["label"] == "Fastest 5K"
 
 
 def test_api_session_endpoints() -> None:

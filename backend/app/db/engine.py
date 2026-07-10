@@ -22,6 +22,7 @@ from app.config import get_settings
 # Import all model modules so their tables register on Base.metadata before
 # create_all runs (chat + weather models live in separate modules from core).
 from app.db.models import chat as _chat_models  # noqa: F401
+from app.db.models import insights as _insight_models  # noqa: F401
 from app.db.models import weather as _weather_models  # noqa: F401
 from app.db.models.core import Base, RawApiData
 

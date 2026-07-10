@@ -16,14 +16,15 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.analytics import engine as ax
-from app.analytics import fitness, readiness, session
+from app.analytics import fitness, goal_plan, insight_engine, readiness, session
 from app.analytics.physiology import estimate_hr_max
 from app.collectors.base import CollectorAuthError, CollectorError, CollectorRateLimitError
 from app.collectors.garmin_connect import GarminConnectCollector
 from app.config import get_app_config, get_settings
-from app.db.engine import session_scope, store_raw
+from app.db.engine import latest_raw_any, session_scope, store_raw
 from app.db.models.core import RawApiData
 from app.logging import get_logger
+from app.normalize.personal_records import parse_personal_records
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api")
@@ -67,13 +68,138 @@ def intensity(days: int = Query(default=42, ge=7, le=3650)) -> dict[str, Any]:
     return fitness.intensity_distribution(ax.load_activities(start, end), _hr_max())
 
 
+@router.get("/analytics/training-summary")
+def training_summary(weeks: int = Query(default=12, ge=4, le=52)) -> dict[str, Any]:
+    """Weekly volume + zone-time bars, plus Garmin's Load Focus / status verdicts.
+
+    Backs the Training page: Monday-anchored weekly miles / vert / hours / zone
+    minutes from the activities, and Garmin's own Load Focus targets as a
+    labeled cross-check beside our load model.
+    """
+    start, end = _range(weeks * 7)
+    acts = ax.load_activities(start, end)
+    # Load Focus / training status refresh daily; a recent month is plenty.
+    daily = ax.load_daily(*_range(35))
+    return {
+        "weeks": ax.weekly_volume(acts).to_dicts(),
+        "garmin": fitness.garmin_load_focus(daily),
+    }
+
+
+@router.get("/analytics/race-predictions")
+def race_predictions(days: int = Query(default=365, ge=28, le=3650)) -> dict[str, Any]:
+    """Garmin's daily race-time predictions: latest, ~30-day deltas, full series.
+
+    Collected daily since Phase 1b; the Progress page charts the trend. Negative
+    delta = the predicted time got faster.
+    """
+    start, end = _range(days)
+    return fitness.race_prediction_trend(ax.load_race_predictions(start, end))
+
+
+@router.get("/personal-records")
+def personal_records() -> dict[str, Any]:
+    """Garmin personal records, parsed from the latest stored snapshot.
+
+    No Garmin call — the daily sync already snapshots these; unknown record
+    types are omitted rather than mislabeled.
+    """
+    with session_scope() as s:
+        payload = latest_raw_any(s, "personal_records")
+    return {"records": parse_personal_records(payload)}
+
+
 @router.get("/analytics/readiness-v2")
 def readiness_v2() -> dict[str, Any]:
     """Composite Red/Yellow/Green readiness with ranked drivers."""
     start, end = _range(90)
     daily = ax.load_daily(start, end)
     load = ax.load_training_load(start, end)
-    return readiness.daily_readiness(daily, load)
+    return readiness.daily_readiness(daily, load, today=end)
+
+
+@router.get("/metric/{key}/detail")
+def metric_detail(key: str, days: int = Query(default=90, ge=7, le=1825)) -> dict[str, Any]:
+    """Local (Tier-1, no-AI) detail for one metric: value, status, change, range
+    stats, the series, deterministic insights, and measured relationships.
+
+    Loads enough history for a stable 30-day baseline even on short display
+    ranges. Returns ``{"available": false}`` for unknown metrics or empty data.
+    """
+    end = date.today()
+    daily = ax.load_daily(end - timedelta(days=max(days, 60) - 1), end)
+    return insight_engine.metric_detail(daily, key, days=days)
+
+
+@router.get("/metric/{key}/ai-insight")
+def metric_ai_insight_get(key: str, days: int = Query(default=90, ge=7, le=1825)) -> dict[str, Any]:
+    """Read a cached AI insight for this metric (never generates — no spend).
+
+    On a page load the detail view calls this to show an existing summary and to
+    learn whether the "Generate deeper analysis" button should be offered.
+    """
+    from app.ai import metric_insight
+
+    end = date.today()
+    daily = ax.load_daily(end - timedelta(days=max(days, 60) - 1), end)
+    detail = insight_engine.metric_detail(daily, key, days=days)
+    cfg = get_app_config().ai_insights
+    return metric_insight.ai_insight(get_settings(), cfg, detail, generate=False)
+
+
+@router.post("/metric/{key}/ai-insight")
+def metric_ai_insight_post(
+    key: str, days: int = Query(default=90, ge=7, le=1825)
+) -> dict[str, Any]:
+    """Explicit user request for a deeper AI summary (the button).
+
+    The only path that may call the model, and only when enabled + under the
+    daily cap + enough history; otherwise returns a reason and the UI keeps the
+    free local insights.
+    """
+    from app.ai import metric_insight
+
+    end = date.today()
+    daily = ax.load_daily(end - timedelta(days=max(days, 60) - 1), end)
+    detail = insight_engine.metric_detail(daily, key, days=days)
+    cfg = get_app_config().ai_insights
+    return metric_insight.ai_insight(get_settings(), cfg, detail, generate=True)
+
+
+@router.get("/goal-plan")
+def goal_plan_route() -> dict[str, Any]:
+    """Event-anchored weekly plan (miles + vert + long effort) vs actual volume.
+
+    Reads the configured goal event; returns ``{"available": false}`` when none
+    is set. The plan window looks back far enough to overlay the athlete's real
+    weekly volume for adherence.
+    """
+    event = get_app_config().event
+    if event is None:
+        return {"available": False}
+    end = date.today()
+    # A 16-week plan spans ~112 days; 200 covers it plus the baseline weeks.
+    acts = ax.load_activities(end - timedelta(days=200), end)
+    weekly = ax.weekly_volume(acts).to_dicts()
+    return goal_plan.goal_plan(
+        event_name=event.name,
+        event_date=event.date,
+        event_kind=event.kind,
+        today=end,
+        weekly_actual=weekly,
+        event_vert_gain_ft=event.vert_gain_ft,
+    )
+
+
+@router.get("/analytics/readiness-history")
+def readiness_history(days: int = Query(default=30, ge=7, le=120)) -> dict[str, Any]:
+    """Band-colored readiness history: the headline score, replayed day by day."""
+    # Load extra history beyond the window so the earliest charted days still
+    # have their 60-day baselines behind them.
+    start, end = _range(days + 90)
+    daily = ax.load_daily(start, end)
+    load = ax.load_training_load(start, end)
+    return readiness.readiness_history(daily, load, days=days, today=end)
 
 
 @router.get("/analytics/risk")
@@ -197,4 +323,3 @@ def _load_splits(activity_id: int) -> list[dict[str, Any]] | None:
             }
         )
     return out or None
-    return None

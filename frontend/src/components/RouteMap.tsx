@@ -6,7 +6,7 @@ import type { RouteData } from "../api";
 // Speed -> color: green where fast, red where slow. Normalized between the
 // run's own p10/p90 so the gradient uses the full range regardless of pace.
 function paceColor(speed: number | null, fast?: number | null, slow?: number | null): string {
-  if (speed == null || fast == null || slow == null || fast <= slow) return "#2a78d6";
+  if (speed == null || fast == null || slow == null || fast <= slow) return "#2e7e88";
   const t = Math.max(0, Math.min(1, (speed - slow) / (fast - slow)));
   return `hsl(${Math.round(t * 120)}, 72%, 42%)`; // 0 = red (slow) … 120 = green (fast)
 }

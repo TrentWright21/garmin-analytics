@@ -190,6 +190,7 @@ function ActivityCards({
               {a.duration_s != null && <span>{hoursMin(a.duration_s)}</span>}
               {a.avg_hr != null && <span>{Math.round(a.avg_hr)} bpm</span>}
               {a.training_load != null && <span>load {Math.round(a.training_load)}</span>}
+              {a.aerobic_te != null && <span>TE {a.aerobic_te.toFixed(1)}</span>}
             </span>
           </button>
         );
@@ -263,6 +264,7 @@ export default function Activities() {
                   <th className="num">Elev</th>
                   <th className="num">Temp</th>
                   <th className="num">Load</th>
+                  <th>TE</th>
                 </tr>
               </thead>
               <tbody>
@@ -288,6 +290,18 @@ export default function Activities() {
                     </td>
                     <td className="num">{fahrenheit(a.avg_temp_c)}</td>
                     <td className="num">{a.training_load ? Math.round(a.training_load) : "—"}</td>
+                    <td>
+                      {a.aerobic_te != null ? (
+                        <>
+                          <span className="tnum">{a.aerobic_te.toFixed(1)}</span>
+                          {a.te_label && (
+                            <span className="muted"> {titleize(a.te_label.toLowerCase())}</span>
+                          )}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

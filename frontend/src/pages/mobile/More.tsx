@@ -7,10 +7,10 @@ import { Card } from "../../components/ui";
 const LINKS = [
   { to: "/briefing", icon: "briefing", label: "Daily Briefing", sub: "The full morning brief" },
   { to: "/overview", icon: "overview", label: "Overview", sub: "Readiness, risk & key metrics" },
+  { to: "/progress", icon: "load", label: "Progress", sub: "Race predictions, PRs & VO2max" },
   { to: "/sleep", icon: "sleep", label: "Sleep Coach", sub: "Sleep need, debt & quality" },
-  { to: "/pace", icon: "pace", label: "Pace Coach", sub: "Training paces & race plans" },
+  { to: "/coach/pace", icon: "pace", label: "Pace Coach", sub: "Training paces & race plans" },
   { to: "/trends", icon: "trends", label: "Trends", sub: "Any metric over time" },
-  { to: "/load", icon: "load", label: "Training Load", sub: "ACWR & monotony" },
 ] as const;
 
 export default function More({

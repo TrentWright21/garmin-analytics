@@ -16,7 +16,7 @@ from sqlalchemy import Date, DateTime, Float, Integer, select
 
 from app.analytics import physiology
 from app.db.engine import session_scope
-from app.db.models.core import Activity, DailyMetrics
+from app.db.models.core import Activity, DailyMetrics, RacePrediction
 from app.db.models.weather import DailyWeather
 
 
@@ -71,6 +71,40 @@ def period_summary(daily: pl.DataFrame, every: str = "1w") -> pl.DataFrame:
         daily.sort("day")
         .group_by_dynamic("day", every=every)
         .agg([pl.col(m).mean().round(1).alias(f"{m}_avg") for m in present])
+    )
+
+
+_M_TO_MILES = 1 / 1609.344
+_M_TO_FT = 3.28084
+
+
+def weekly_volume(activities: pl.DataFrame) -> pl.DataFrame:
+    """Per-calendar-week training volume: miles, vert ft, hours, zone minutes.
+
+    Monday-anchored weeks over the activities frame — the Training page's
+    weekly bars. Imperial units by design (the UI is imperial throughout).
+    Zone minutes sum the per-session ``zone_*_s`` seconds; sessions recorded
+    before zone capture simply contribute nothing to those columns.
+    """
+    if activities.is_empty() or "day" not in activities.columns:
+        return pl.DataFrame({"week": []})
+    exprs: list[pl.Expr] = [pl.len().alias("sessions")]
+    if "distance_m" in activities.columns:
+        exprs.append((pl.col("distance_m").sum() * _M_TO_MILES).round(1).alias("miles"))
+    if "elevation_gain_m" in activities.columns:
+        exprs.append((pl.col("elevation_gain_m").sum() * _M_TO_FT).round(0).alias("vert_ft"))
+    if "duration_s" in activities.columns:
+        exprs.append((pl.col("duration_s").sum() / 3600.0).round(2).alias("hours"))
+    for z in range(1, 6):
+        col = f"zone_{z}_s"
+        if col in activities.columns:
+            exprs.append((pl.col(col).sum() / 60.0).round(0).alias(f"z{z}_min"))
+    return (
+        activities.drop_nulls(subset=["day"])
+        .sort("day")
+        .group_by_dynamic("day", every="1w", start_by="monday")
+        .agg(exprs)
+        .rename({"day": "week"})
     )
 
 
@@ -440,6 +474,21 @@ def training_load_for(activities: pl.DataFrame) -> pl.DataFrame:
 def load_training_load(start: date | None = None, end: date | None = None) -> pl.DataFrame:
     """Loader: activities in range -> daily training load, athlete config applied."""
     return training_load_for(load_activities(start, end))
+
+
+def load_race_predictions(start: date | None = None, end: date | None = None) -> pl.DataFrame:
+    """Loader: Garmin's daily race-time predictions (Phase 1b table)."""
+    with session_scope() as s:
+        q = select(RacePrediction)
+        if start:
+            q = q.where(RacePrediction.day >= start)
+        if end:
+            q = q.where(RacePrediction.day <= end)
+        rows = s.execute(q.order_by(RacePrediction.day)).scalars().all()
+        data = [
+            {c.name: getattr(r, c.name) for c in RacePrediction.__table__.columns} for r in rows
+        ]
+    return pl.DataFrame(data, schema=_model_schema(RacePrediction))
 
 
 def load_activity(activity_id: int) -> dict[str, Any] | None:

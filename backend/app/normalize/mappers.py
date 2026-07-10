@@ -55,6 +55,25 @@ def _first_device_status(payload: Any) -> dict[str, Any]:
     return {}
 
 
+def _load_balance_device(payload: Any) -> dict[str, Any]:
+    """The Load Focus entry in a ``training_status`` payload, per device.
+
+    Nested at ``mostRecentTrainingLoadBalance.metricsTrainingLoadBalanceDTOMap
+    .<deviceId>``; the entry flagged ``primaryTrainingDevice`` wins, else the
+    first device present.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    balance = (payload.get("mostRecentTrainingLoadBalance") or {}).get(
+        "metricsTrainingLoadBalanceDTOMap"
+    ) or {}
+    devices = [d for d in balance.values() if isinstance(d, dict)]
+    for device_data in devices:
+        if device_data.get("primaryTrainingDevice"):
+            return device_data
+    return devices[0] if devices else {}
+
+
 def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
     """Assemble one DailyMetrics row from that day's raw payloads.
 
@@ -113,6 +132,18 @@ def build_daily_metrics(day: date, raw: dict[str, Any]) -> DailyMetrics:
         m.training_status = str(phrase) if phrase else None
         acute_dto = device.get("acuteTrainingLoadDTO") or {}
         m.acwr_garmin = _num(acute_dto.get("dailyAcuteChronicWorkloadRatio"))
+        balance = _load_balance_device(ts_payload)
+        m.load_aerobic_low = _num(balance.get("monthlyLoadAerobicLow"))
+        m.load_aerobic_high = _num(balance.get("monthlyLoadAerobicHigh"))
+        m.load_anaerobic = _num(balance.get("monthlyLoadAnaerobic"))
+        m.load_aerobic_low_target_min = _int(balance.get("monthlyLoadAerobicLowTargetMin"))
+        m.load_aerobic_low_target_max = _int(balance.get("monthlyLoadAerobicLowTargetMax"))
+        m.load_aerobic_high_target_min = _int(balance.get("monthlyLoadAerobicHighTargetMin"))
+        m.load_aerobic_high_target_max = _int(balance.get("monthlyLoadAerobicHighTargetMax"))
+        m.load_anaerobic_target_min = _int(balance.get("monthlyLoadAnaerobicTargetMin"))
+        m.load_anaerobic_target_max = _int(balance.get("monthlyLoadAnaerobicTargetMax"))
+        balance_phrase = balance.get("trainingBalanceFeedbackPhrase")
+        m.load_balance_phrase = str(balance_phrase) if balance_phrase else None
 
     if mm := raw.get("max_metrics"):
         first = mm[0] if isinstance(mm, list) and mm else mm if isinstance(mm, dict) else {}

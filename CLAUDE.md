@@ -212,10 +212,170 @@ Frontend dev (hot reload): `cd frontend; npm run dev` (proxies /api to :3000).
   type/client. `daily_readiness` output gains `garmin_training_readiness`
   (labeled cross-check, never an input); Overview card renders it. Real data:
   ours 73 green vs Garmin 50 — the disagreement is now visible instead of
-  hidden. 202 tests, ruff + mypy --strict clean, frontend builds. All of this
-  Phase 2 work is UNCOMMITTED, awaiting Trent's commit + droplet update.
-  **NEXT UP:** droplet 365-day backfill (ops), then Phase 3 UI restructure —
-  see IMPROVEMENT_PLAN.md.
+  hidden. 202 tests, ruff + mypy --strict clean, frontend builds. (Since
+  committed: Phase 2 in `237d588`, Phase 3a in `378e02f`/`fcdd8db`.)
+- **2026-07-10 session: D4 closed + Phase 3b item 1 (merged Training page)
+  built, awaiting Trent's commit.** (1) **D4-rest fixed — the 2026-07-08 review
+  is now fully closed**: `daily_readiness` gained a `today` param; when the
+  latest row is today, the stress component scores **yesterday's full day**
+  (output `stress_source`, driver label "(yesterday, full day)"); overnight-only
+  partial is a labeled last resort. All 3 call sites pass `today`. (2) **Garmin
+  Load Focus normalized**: 10 new DailyMetrics columns (`load_aerobic_low/high`,
+  `load_anaerobic`, six `_target_min/_max`, `load_balance_phrase`) mapped from
+  `mostRecentTrainingLoadBalance` (primary device wins); dev DB renormalized —
+  196 days populated. (3) **New analytics + API**: `engine.weekly_volume`
+  (Monday-anchored weekly miles/vert_ft/hours/z1-z5 minutes, imperial),
+  `fitness.garmin_load_focus` (status + buckets graded below/within/above),
+  `GET /api/analytics/training-summary`. (4) **Merged Training page**
+  (`pages/Training.tsx`, route `/training`, desktop nav "Training" + mobile
+  Training tab): PMC + stat cards, weekly miles/vert bars, zone-time stacked
+  bar (palette hues re-validated for CVD adjacency), Garmin's-verdict card with
+  Load Focus target-range meters, ACWR/monotony charts, VO2max + intensity.
+  `Fitness.tsx` + `TrainingLoad.tsx` deleted; `/fitness` + `/load` redirect.
+  Verified live on port 3000 (endpoint + SPA route + real data). 210 tests,
+  ruff + mypy --strict clean, frontend builds.
+- **2026-07-10 (same session): Phase 3b item 2 — Progress page — built,
+  awaiting Trent's commit.** New `pages/Progress.tsx` at `/progress` (desktop
+  nav "Progress" after Training; mobile More list): race-prediction stat tiles
+  + per-distance trend chart, PR timeline, VO2max year chart, EF-on-easy-runs
+  chart, goal-event countdown. Backend: `engine.load_race_predictions` loader,
+  `fitness.race_prediction_trend` (latest + deltas vs a >=30d-old baseline,
+  `baseline_span_days` keeps thin history honest), NEW pure parser
+  `app/normalize/personal_records.py` (Garmin PR typeId map — time/distance/
+  ascent/count kinds, unknown ids skipped; beware `isinstance(True, int)`),
+  `GET /api/analytics/race-predictions` + `GET /api/personal-records`.
+  Verified live: 4 days of predictions chart, 11 real PRs parse (1K 3:36,
+  HM 2:06:06), `/progress` serves. 214 tests, ruff + mypy --strict clean,
+  frontend builds. `lib/format.ts` gained `clock()` (mm:ss / h:mm:ss).
+- **2026-07-10 (same session): readiness history + transparency + Activities
+  TE — built, awaiting Trent's commit.** `readiness.readiness_history` (pure)
+  replays `daily_readiness` per day on truncated frames — honest history, no
+  retro-smoothing; `GET /api/analytics/readiness-history?days=30` (~360ms on
+  real data, 16 green/14 yellow). Overview: band-colored 30d bar chart card
+  (ref lines at 67/40, band legend + counts) + a "How is this computed?"
+  `<details>` disclosure on the readiness card (weights, renormalization, load
+  penalty, stress-source caveat). Activities: TE column (aerobic TE + label,
+  e.g. "3.4 Lactate Threshold") on the desktop table + TE on mobile cards
+  (pace column already existed). `ReadinessV2` type gained `stress_source`.
+  215 tests, ruff + mypy --strict clean, frontend builds, verified live.
+- **2026-07-10 (same session): Pace Coach folded into Coach — built, awaiting
+  Trent's commit.** `Coach.tsx` is now a hub: shared topbar + routed tab chips
+  — `/coach` (AI Chat, the old chat page as `ChatPanel`) and `/coach/pace`
+  (renders `PaceCoach`, whose own topbar moved into the shared shell). `/pace`
+  redirects in both shells; desktop nav down to 8 items ("Coach"); mobile More
+  links to `/coach/pace`. Frontend-only change — 215 tests, ruff + mypy clean,
+  build clean, `/coach` + `/coach/pace` verified live.
+- **2026-07-10 (same session): Pace Coach mileage model REVAMPED (Trent's
+  request) — built, awaiting Trent's commit.** The old `build_plan` scaled peak
+  mileage from CURRENT volume only (a 7 mi/wk runner got a ~13 mi/wk "half
+  marathon plan" — the "stuck at 14" bug Trent spotted). Now volume is anchored
+  to the RACE + GOAL TIME via a deep-research pass (sources in the
+  `RACE_VOLUME` comment block in pace_coach.py; the workflow's adversarial
+  verify stage died on a usage limit, so claims are single-pass extractions
+  corroborated against the primary papers): Fokkema 2020 volume-vs-finish-time
+  thresholds (HM >~20 mi/wk, marathon ≥25/40+), Higdon/Pfitzinger/Hansons plan
+  anchors, Buist RCT + Nielsen (weekly 10% rule NOT protective; session spikes
+  are the risk → ramp caps ABSOLUTE jumps at 2-4 mi/wk with cutback weeks),
+  Bosquet 2007 taper meta (41-60% cut; taper 1wk short races / 2wk HM / 3wk
+  marathon), Tanda equation as a marathon cross-check. New pure fns
+  `race_volume` (goal-time-interpolated targets + floors + long-run share/cap
+  + min-prep weeks) and `tanda_marathon_peak_miles`; `build_plan` output gains
+  `mileage_target_peak`, `volume_limited`, `volume_note` (cited),
+  `long_run_peak`, `taper_weeks`; verdict is now fitness AND volume (volume
+  shortfall ⇒ at least "ambitious", honest headline). UI shows the target, the
+  volume-limited pill, and the note. Real check: HM 2:00 in 8wk from 5 mi/wk →
+  builds to 15, target 28, floor 20, "Volume is the limiter"; 16wk → hits 28.
+  220 tests, ruff + mypy --strict clean, frontend builds, verified live.
+- **2026-07-10 (same session): Phase 3b FINAL item — ChartLegend extraction +
+  tile demotion — built, awaiting Trent's commit. Phase 3b desktop restructure
+  is now COMPLETE.** New `ChartLegend` (`components/charts.tsx`) + `.chart-legend`
+  CSS replace the repeated `row wrap + tt-dot` legend markup in Training (×2),
+  Trends, PaceCoach, and the Overview band legend; the class also sizes the
+  legend dots (bare `.tt-dot` outside `.tt` had no dimensions — latent bug).
+  Overview now splits metric cards into primary vs a `SECONDARY_METRICS` set
+  (respiration/SpO2/floors) behind a `<details class="more-metrics">`
+  disclosure so recovery/training signals lead (real data: 9 primary + "More
+  metrics (1)"). Frontend-only; tsc+vite clean, verified live.
+- **2026-07-10 (same session): Phase 4 STARTED — Whitney/goal-plan generator —
+  built, awaiting Trent's commit.** New pure `app/analytics/goal_plan.py`: an
+  event-anchored week-by-week plan (final week = event's calendar week, spanning
+  `plan_weeks` back) with per-week miles + **vert targets** + long effort +
+  phase (Base/Build/Peak/Taper); vert is first-class (a summit day is elevation
+  gain, not distance) and peak vert anchors on the event's `vert_gain_ft` (new
+  optional EventConfig field; Whitney=6100 in config.yaml). Elapsed weeks get an
+  actual-volume overlay from `engine.weekly_volume`, scored only within real
+  data range; adherence grades the WORSE axis (vert binds for climbs) with
+  honest copy. `GET /api/goal-plan` ({available:false} if no event); Goal Plan
+  section at top of Progress (summary tiles + adherence pill/headline + two
+  plan-vs-actual grouped-bar charts, vert + miles, current-week marker). Real
+  data (Whitney, 22 days out): Peak week 29mi/5800ft; adherence over 12 wks
+  vert 0% / miles 11% -> "behind" (Trent's flat runs carry no vert — the gap
+  the tool surfaces). test_goal_plan.py (6) + API test. 227 tests, ruff+mypy
+  clean, verified live.
+  **NEXT UP:** droplet 365-day backfill (ops, deferred), rest of **Phase 4**
+  (weekly AI Sunday report — reuses notify plumbing; Telegram RPE/soreness
+  feedback loop; plateau/anomaly detection; coaching-aggressiveness knob;
+  manual weight entry) — see IMPROVEMENT_PLAN.md.
+- **2026-07-10 (same session): UI REDESIGN initiative started (Blue Whale /
+  Jet Stream) — staged; all uncommitted, awaiting Trent's commit.** Audit +
+  plan agreed with Trent (dedicated metric-detail route; hybrid chart palette;
+  Tier-1 insights now, AI Tier 2/3 scaffolded off). Shipped stages:
+  * **Stage 1 (tokens):** re-themed `theme.css` `:root` to Blue Whale #03363D
+    + Jet Stream #BDD9D7 (teal-tinted canvas, white cards, teal borders/hover),
+    added a typography scale, harmonized "good" to teal-green, Blue Whale drives
+    headings/nav/buttons/selected/**metric values**. Kept every semantic class
+    name (pages restyle with no logic change) and the validated multi-hue
+    categorical chart palette (hybrid); added `brand`/`jet`/`brandSoft` +
+    teal chrome to `charts.tsx COLORS`. Verified: build clean, routes 200,
+    Blue Whale in compiled CSS.
+  * **Stage 2 (registry + card):** `lib/metrics.ts` central registry (10 daily
+    metrics: label/unit/description/chart/related/direction/format) + reusable
+    clickable `components/MetricCard.tsx` (links to /metric/:key). Renamed API
+    type `MetricCard`→`MetricCardData`.
+  * **Stage 5 (local insight engine):** `app/analytics/insight_engine.py`
+    (Tier 1, no AI) — `metric_detail(daily, key, days)`: current/status/delta,
+    range stats, series, deterministic insights (baseline deviation,
+    consecutive run, outlier, trend, normal-range, thin-data), and REAL
+    measured Pearson relationships with related metrics (never fabricated).
+    `GET /api/metric/{key}/detail?days=`. `test_insight_engine.py` (6) + API
+    test. Real data: HRV↔RHR r=-0.78, HRV↔Sleep +0.38 — physiologically sane.
+  * **Stage 3 (detail route):** `/metric/:key` (`pages/MetricDetail.tsx`,
+    wired both shells) — deep-linkable; range chips 7/30/90/180/365; reusable
+    interactive `components/MetricHistoryChart.tsx` (tap-to-select point w/
+    date+value+change readout, dashed avg line, missing-data gaps, Blue Whale +
+    Jet Stream fill, `sr-only` chart summary); stats row, plain-English
+    explanation, Local-analysis insight card, tappable relationship rows.
+    Overview tiles swapped to `MetricCard` (metrics now explorable). Verified
+    live end-to-end. AI usage UNCHANGED (no new AI calls).
+  * **Stage 7 (desktop dashboard restructure):** reordered the landing
+    **Briefing** around the five morning questions — Q1 readiness+recovery, Q3
+    **NEW "Today's plan" workout card** (the centerpiece; was mobile-only —
+    surfaces the existing per-day-cached `/api/briefing/workout`, so NO new AI
+    calls: workout_type/intensity/duration/why/watch-out + AI-vs-Rule-based
+    provenance pill), Q2 Body Battery + conditions, Q4 risk, Q5 goal event +
+    Fitness&Form. Mobile Today already answered the five questions (skipped).
+    Verified routes serve.
+  * **Stage 6 (AI cost-control scaffold — OFF by default):** new
+    `AiInsightConfig` (config.py + documented `ai_insights:` block in
+    config.yaml: enabled=false, model=**claude-haiku-4-5** not Opus,
+    max_output_tokens=320, cache_hours=18, max_calls_per_day=25, min_days=14),
+    mutable tables `ai_insight_cache` + `ai_usage_log` (`db/models/insights.py`,
+    registered in engine.py), service `app/ai/metric_insight.py` (Tier 2/3):
+    GET reads cache only (never spends), POST is the only path that can call the
+    model and only when enabled + under the daily cap + enough history + no
+    fresh cache; **data-fingerprint cache** self-invalidates on new data;
+    every request logged (source/model/tokens/error). `GET|POST
+    /api/metric/{key}/ai-insight`. Frontend: an `AiInsightCard` on the detail
+    view — hidden entirely when disabled; "Generate deeper AI analysis" button;
+    provenance badge (Local / Cached AI / New AI) + timestamp + model. Tests:
+    `test_metric_ai_insight.py` (6) — disabled/thin/generate/cache-hit/
+    daily-cap/error, all with a mocked client counting calls. Verified live:
+    GET+POST both return enabled=false, NO model call — **still zero AI spend**.
+  **REDESIGN NEXT UP:** Stage 8 (mobile chart-by-chart passes + a11y:
+  reduced-motion, remaining tables -> cards), Stage 4-rest (tap-to-select on
+  other charts), 9 (frontend test runner), 10 (README/SECURITY/.env.example
+  doc pass). Local Tier-1 insights work with AI off; enabling costs only Haiku
+  calls, hard-capped per day.
 - **Backfill status (corrected 2026-07-08):** the DEV machine DB already has
   **367 days** of daily data (290 d HRV, 119 activity days) — earlier "only 30
   days" notes were stale. Only the **droplet's** separate DB is still ~30 days;

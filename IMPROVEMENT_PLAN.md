@@ -11,11 +11,23 @@ unchecked task. Keep it updated as tasks land — check items off and note the c
 - [x] **Phase 1b — normalize the already-collected data** — shipped commit `218f2f5`
   (2026-07-09). Details in "What already shipped" below. Dev DB renormalized (196
   days of training status, TE on 158/159 activities, 4 race-prediction days).
-- [ ] **Ops — 365-day backfill on the droplet** (no code; ~5k Garmin calls)
+- [ ] **Ops — 365-day backfill on the droplet** (no code; ~5k Garmin calls;
+  deliberately deferred 2026-07-10 — Trent's call)
 - [x] **Phase 2 — better analysis engine** — COMPLETE 2026-07-09 (all nine items;
-  see the checked entries below for what each shipped).
-- [ ] **Phase 3 — UI restructure**
+  see the checked entries below for what each shipped). Committed in `237d588`.
+- [~] **Phase 3 — UI restructure** — 3a (mobile) implemented + committed
+  (`378e02f`/`fcdd8db`, on-device iPhone check still pending); **3b desktop
+  restructure COMPLETE 2026-07-10** (Training merge, Progress page, Activities
+  TE, readiness history + transparency, Pace-Coach-into-Coach, ChartLegend +
+  tile demotion — all uncommitted, awaiting Trent's commit).
 - [ ] **Phase 4 — advanced coaching / product features**
+- [x] **D4-rest (the last open review finding)** — FIXED 2026-07-10. Readiness's
+  stress component no longer reads today's partial ``avg_stress`` row: when the
+  latest row is today, it scores **yesterday's full day** (``stress_source:
+  "yesterday"``, driver label says so); today's overnight-only value is a
+  labeled last resort (``today_partial``). ``daily_readiness`` gained a
+  ``today`` param; all three call sites (readiness-v2 route, coach tool,
+  briefing) pass it. Tests in ``test_m8_performance.py``.
 
 ---
 
@@ -314,8 +326,8 @@ fixes; (2) mobile shell + bottom nav + safe areas + CSS layer; (3) Today screen
 (Activities cards, chart compaction, coach chat, bottom-sheet modal, tables);
 (5) gates (tsc/vite/ruff/mypy/pytest) + desktop-regression check + docs.
 
-**Status (2026-07-09): stages 1-5 implemented, awaiting Trent's commit +
-on-device check.** Landed: `lib/layoutMode.tsx` (provider/hook/persistence/
+**Status (2026-07-09): stages 1-5 implemented; committed to `main`
+(`378e02f`/`fcdd8db`). The real-iPhone on-device check is still pending.** Landed: `lib/layoutMode.tsx` (provider/hook/persistence/
 `data-layout` stamp), `components/LayoutToggle.tsx` (sidebar footer + More),
 `MobileShell` in App.tsx (sticky header, 5-tab bottom nav, safe areas),
 `pages/mobile/Today.tsx` + `pages/mobile/More.tsx`, `GET /api/briefing/workout`
@@ -339,17 +351,60 @@ code splitting (bundle is ~800 kB), PaceCoach mobile tables -> key-value cards.
 
 ### Phase 3b — desktop restructure (unchanged plan, later)
 
-- [ ] **Training** (merge Fitness + Training Load + load parts of Trends): PMC,
-  weekly mileage + vert bars, weekly zone-time stacked bar, monotony, Garmin
-  training status + Load Focus vs targets.
-- [ ] **Progress** (new): race-predictor trend chart (data from Phase 1b), PR
-  timeline, VO2max trend, efficiency-factor trend on easy runs, event countdown.
-- [ ] **Sleep** (exists), **Activities** (add TE + pace columns; splits/decoupling
-  in the modal), **Coach** (fold Pace Coach in as a tab).
-- [ ] Readiness **history chart** (30d, band-colored) + "how is this computed?"
-  tooltips (driver/evidence data already in the API responses).
-- [ ] Extract repeated inline styles into `components/ui.tsx` variants; demote
-  floors/respiration/SpO2 tiles to a "More" section.
+- [x] **Training** (merge Fitness + Training Load): DONE 2026-07-10. New
+  `pages/Training.tsx` at `/training` (desktop nav + mobile Training tab;
+  `/fitness` and `/load` redirect, old pages deleted): PMC + CTL/ATL/TSB cards,
+  **weekly miles + vert bars** and **weekly zone-time stacked bar** (new
+  `GET /api/analytics/training-summary` -> `engine.weekly_volume`,
+  Monday-anchored, imperial), ACWR + acute-vs-chronic + monotony, VO2max +
+  intensity, and a **"Garmin's verdict" card** — training status pill + Load
+  Focus meters (4-week anaerobic/high-aerobic/low-aerobic vs target ranges,
+  below/within/above). Backing data: 10 new DailyMetrics columns
+  (`load_aerobic_low/high`, `load_anaerobic`, their `_target_min/_max`,
+  `load_balance_phrase`) mapped from the training_status payload's
+  `mostRecentTrainingLoadBalance` (primary device wins) +
+  `fitness.garmin_load_focus`; dev DB renormalized (196 days). Zone-bar colors
+  are palette hues re-validated for CVD adjacency.
+- [x] **Progress** (new): DONE 2026-07-10. `pages/Progress.tsx` at `/progress`
+  (desktop nav after Training; mobile More list): race-prediction stat tiles
+  (5K/10K/Half/Marathon + faster/slower delta vs a >=30d baseline, honest
+  "building baseline" copy while history is thin) + per-distance trend chart
+  (`GET /api/analytics/race-predictions` -> `engine.load_race_predictions` +
+  `fitness.race_prediction_trend`); **PR timeline** grouped
+  running/cycling/steps (`GET /api/personal-records` -> new pure parser
+  `normalize/personal_records.py` over the latest raw snapshot, typeId map,
+  unknown types skipped — 11 real PRs parse today); VO2max year chart;
+  efficiency-factor-on-easy-runs chart (existing `/api/sessions`); goal-event
+  countdown card.
+- [x] **Sleep** (exists), **Activities** (TE + pace columns DONE 2026-07-10 —
+  TE column with label on the desktop table, TE on mobile cards; pace column
+  already existed; decoupling already renders in the modal — a per-lap splits
+  table stays blocked on Garmin not returning laps in the bulk or details
+  payloads), **Coach** (Pace Coach folded in DONE 2026-07-10 — the Coach page
+  is now a hub with routed tabs `/coach` (AI Chat) and `/coach/pace` (Pace
+  Coach, its topbar lifted into the shared shell); `/pace` redirects; desktop
+  nav is down to 8 items; the mobile More list links to the tab).
+- [x] Readiness **history chart** (30d, band-colored) + "how is this computed?"
+  — DONE 2026-07-10. `readiness.readiness_history` replays `daily_readiness`
+  with frames truncated to each day (the chart shows what the score actually
+  said each morning, never retro-smoothed) -> `GET
+  /api/analytics/readiness-history` (30d in ~360ms on real data). Overview
+  gains a band-colored bar chart (threshold reference lines at 67/40, band
+  legend + day counts) and a "How is this computed?" disclosure on the
+  readiness card (weights, renormalization, load penalty, band cutoffs, the
+  stress-source caveat, Garmin-as-cross-check).
+- [x] Extract repeated inline styles into a reusable variant; demote
+  floors/respiration/SpO2 tiles to a "More" section. DONE 2026-07-10. New
+  `ChartLegend` in `components/charts.tsx` (co-located with `ChartTooltip`/
+  `COLORS` — the natural home vs ui.tsx) + a `.chart-legend` CSS class replace
+  the hand-rolled `row wrap + tt-dot` legend markup in Training (×2), Trends,
+  PaceCoach, and the Overview readiness-band legend; the class also finally
+  sizes the legend dots (bare `.tt-dot` outside `.tt` had no dimensions — a
+  latent invisible-dot bug). Overview splits metric cards into primary vs a
+  `SECONDARY_METRICS` set (respiration/SpO2/floors) rendered in a collapsible
+  `<details class="more-metrics">` disclosure, so recovery/training signals
+  lead. Real data: 9 primary tiles + "More metrics (1)" (respiration; SpO2/
+  floors join when present). **Phase 3b COMPLETE.**
 - [x] ~~Today page~~ — absorbed into Phase 3a's mobile Today screen + the
   `/api/briefing/workout` endpoint (desktop can adopt the same card in 3b).
 
@@ -358,8 +413,26 @@ code splitting (bundle is ~800 kB), PaceCoach mobile tables -> key-value cards.
 - [ ] Weekly AI training report (Sunday evening Telegram; reuse notify plumbing).
 - [ ] Telegram feedback loop: one-tap RPE/soreness reply -> journal table -> next-day
   recommendation input (the one signal no sensor gives).
-- [ ] Whitney/goal plan generator: weekly targets, vert progression, taper;
-  planned-vs-actual comparison.
+- [x] Whitney/goal plan generator: weekly targets, vert progression, taper;
+  planned-vs-actual comparison. DONE 2026-07-10 (first Phase 4 item). New pure
+  module `app/analytics/goal_plan.py`: an **event-anchored** week-by-week plan
+  (its final week = the event's calendar week, spanning `plan_weeks` back) with
+  per-week mileage + **vert (elevation-gain) targets** + a long effort + phase
+  (Base/Build/Peak/Taper); vert is first-class because a summit day is defined
+  by gain, not distance. Peak vert anchors on the event's own
+  `vert_gain_ft` (new optional `EventConfig` field; Whitney set to 6100 in
+  config.yaml). Elapsed weeks get an **actual-volume overlay** from
+  `engine.weekly_volume`, scored only within the athlete's real data range;
+  adherence grades on the WORSE axis (vert binds for climbs) with honest copy.
+  `GET /api/goal-plan` (returns `{available:false}` when no event configured);
+  a **Goal Plan section at the top of Progress** — summary tiles (days to go,
+  this-week target, peak build, vert-vs-plan %), an adherence pill + headline,
+  and two plan-vs-actual grouped-bar charts (vert, miles) with a current-week
+  marker. Real data (Whitney, 22 days out): this week Peak 29mi/5800ft long
+  hike; adherence over 12 elapsed weeks vert 0% / miles 11% -> "behind" with
+  realistic summit-day advice (Trent's flat Hartselle runs carry almost no
+  vert — exactly the gap the tool exists to surface). `test_goal_plan.py` (6)
+  + an API test; 227 tests, ruff + mypy clean, verified live.
 - [ ] Plateau/anomaly detection extending `generate_insights` (z-scores on RHR/HRV/EF,
   missed-training detection); consistency score.
 - [ ] Coaching-aggressiveness config (conservative default; offsets the ceiling).
@@ -381,6 +454,6 @@ forecast now drives the best-run-window).
 Also fixed 2026-07-09: D15 (legacy readiness retired — one score, with Garmin's
 as a labeled cross-check).
 
-Still open: readiness reads today's partial `avg_stress` row (D4-rest: at
-06:30 stress reflects overnight only — use yesterday's full-day value or label
-it). That is the LAST open finding from the review.
+Fixed 2026-07-10: D4-rest (readiness stress now scores yesterday's full day
+when the latest row is today's partial one — see the status ledger). **Every
+finding from the 2026-07-08 review is now closed.**

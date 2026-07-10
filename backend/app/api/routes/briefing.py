@@ -108,7 +108,7 @@ def build_briefing() -> dict[str, Any]:
 
     return {
         "date": str(today),
-        "readiness": readiness.daily_readiness(daily, load),
+        "readiness": readiness.daily_readiness(daily, load, today=today),
         "risk": readiness.risk_flags(daily, acts, load),
         "fitness": fit,
         "streak": brief.training_streak(acts, today),

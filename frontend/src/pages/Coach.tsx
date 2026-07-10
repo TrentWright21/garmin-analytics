@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api, type ChatMessage, type ConversationSummary } from "../api";
+import PaceCoach from "./PaceCoach";
 
 const SUGGESTIONS = [
   "How's my training load looking this week?",
@@ -8,7 +10,36 @@ const SUGGESTIONS = [
   "What stands out in my sleep this month?",
 ];
 
-export default function Coach() {
+/** Coach hub: the AI chat and the VDOT Pace Coach as sibling tabs (Phase 3b).
+ * Tabs are real routes (/coach, /coach/pace) so each is linkable/bookmarkable. */
+export default function Coach({ tab = "chat" }: { tab?: "chat" | "pace" }) {
+  const chip = ({ isActive }: { isActive: boolean }) => `chip ${isActive ? "on" : ""}`;
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>Coach</h1>
+          <div className="sub">
+            {tab === "pace"
+              ? "VDOT-based goal setting & a plan to get there — Jack Daniels' running-science model"
+              : "Ask about your own Garmin trends — it reads your real numbers"}
+          </div>
+        </div>
+        <div className="chips">
+          <NavLink to="/coach" end className={chip}>
+            AI Chat
+          </NavLink>
+          <NavLink to="/coach/pace" className={chip}>
+            Pace Coach
+          </NavLink>
+        </div>
+      </div>
+      {tab === "pace" ? <PaceCoach /> : <ChatPanel />}
+    </>
+  );
+}
+
+function ChatPanel() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);

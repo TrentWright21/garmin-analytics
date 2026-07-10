@@ -67,6 +67,84 @@ def test_build_plan_structure_and_feasibility() -> None:
     assert set(plan["goal_paces"]) >= {"easy", "threshold", "interval"}
 
 
+def test_volume_targets_scale_with_race_and_goal() -> None:
+    # Same horizon: a marathon must build far more volume than a slower half,
+    # and a faster half more than a slower one. Taper lengthens with distance.
+    hm_2h = pace_coach.race_volume("Half Marathon", 2 * 3600.0)
+    hm_215 = pace_coach.race_volume("Half Marathon", 2.25 * 3600.0)
+    m_4h = pace_coach.race_volume("Marathon", 4 * 3600.0)
+    five_k = pace_coach.race_volume("5K", 30 * 60.0)
+    assert m_4h["target_peak"] > hm_2h["target_peak"] > hm_215["target_peak"]
+    assert hm_215["target_peak"] > five_k["target_peak"]
+    assert m_4h["taper_weeks"] == 3 and hm_2h["taper_weeks"] == 2 and five_k["taper_weeks"] == 1
+
+
+def test_half_plan_from_low_base_builds_and_is_honest_about_the_ceiling() -> None:
+    # The old model peaked a 7 mi/wk runner at ~13 mi/wk "for a half marathon".
+    # Now: the plan actually builds volume, states the race-specific target
+    # (~28 mi/wk for a 2:00), and flags that 8 weeks can't safely reach it.
+    plan = pace_coach.build_plan(
+        current_vdot=40.0,
+        goal_distance_m=pace_coach.RACES["Half Marathon"],
+        goal_time_s=2 * 3600.0,
+        weeks=8,
+        current_weekly_miles=7.0,
+        goal_key="Half Marathon",
+    )
+    assert plan["mileage_target_peak"] >= 28
+    assert plan["mileage_peak"] > 14  # no longer stuck at current volume
+    assert plan["volume_limited"] is True
+    assert plan["taper_weeks"] == 2
+    assert len(plan["schedule"]) == 8
+    assert "Volume is the limiter" in plan["headline"]
+    assert "go race it" not in plan["headline"]  # fitness-ready but volume-short
+    assert plan["verdict"] in {"ambitious", "very-ambitious"}  # never rosier
+    assert "mi/wk" in plan["volume_note"]
+
+
+def test_marathon_plan_volume_floor_taper_and_long_run_cap() -> None:
+    plan = pace_coach.build_plan(
+        current_vdot=45.0,
+        goal_distance_m=pace_coach.RACES["Marathon"],
+        goal_time_s=4 * 3600.0,
+        weeks=18,
+        current_weekly_miles=25.0,
+        goal_key="Marathon",
+    )
+    assert plan["mileage_target_peak"] == 40  # the 4:00 anchor (Fokkema/Higdon)
+    assert plan["mileage_peak"] == 40  # 18 weeks from 25 mi/wk reaches it
+    assert plan["volume_limited"] is False
+    assert plan["taper_weeks"] == 3
+    assert plan["long_run_peak"] <= 20
+    assert all(w["long_run_miles"] <= 20 for w in plan["schedule"])
+    # Race week sits in the meta-analysis' 41-60% volume cut.
+    assert plan["schedule"][-1]["mileage"] <= 0.6 * plan["mileage_peak"]
+    assert "Tanda" in plan["volume_note"]
+
+
+def test_plan_never_cuts_a_high_volume_runner() -> None:
+    # Already running more than the goal needs -> maintain, never prescribe less.
+    plan = pace_coach.build_plan(
+        current_vdot=50.0,
+        goal_distance_m=pace_coach.RACES["5K"],
+        goal_time_s=25 * 60.0,
+        weeks=8,
+        current_weekly_miles=35.0,
+        goal_key="5K",
+    )
+    assert plan["mileage_start"] == 35
+    assert plan["mileage_peak"] >= 35
+    assert plan["volume_limited"] is False
+
+
+def test_tanda_cross_check_inverts_sanely() -> None:
+    # A 4:00 marathon at a plausible easy pace implies a mid-30s to mid-40s
+    # peak; goals outside the equation's domain return None instead of junk.
+    mi = pace_coach.tanda_marathon_peak_miles(4 * 3600.0, easy_pace_s_per_km=390.0)
+    assert mi is not None and 25 <= mi <= 50
+    assert pace_coach.tanda_marathon_peak_miles(10 * 3600.0, easy_pace_s_per_km=390.0) is None
+
+
 # -- sleep coach -------------------------------------------------------------
 
 

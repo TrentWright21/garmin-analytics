@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, type Pace } from "../api";
-import { COLORS, ChartTooltip, axisProps } from "../components/charts";
+import { COLORS, ChartLegend, ChartTooltip, axisProps } from "../components/charts";
 import { Card, Loading, Pill } from "../components/ui";
 import { parseClock } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
@@ -49,16 +49,8 @@ export default function PaceCoach() {
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>Pace Coach</h1>
-          <div className="sub">
-            VDOT-based goal setting & a plan to get there — Jack Daniels' running-science model
-          </div>
-        </div>
-      </div>
-
-      {/* Current fitness */}
+      {/* Current fitness (rendered inside the Coach hub's Pace tab — the
+          shared topbar lives in Coach.tsx) */}
       <div className="grid cols-4">
         <Card>
           <div className="stat">
@@ -155,6 +147,7 @@ export default function PaceCoach() {
                 <Pill status={VERDICT_STATUS[p.verdict] ?? "neutral"}>
                   {p.verdict.replace(/-/g, " ")}
                 </Pill>
+                {p.volume_limited && <Pill status="watch">volume-limited</Pill>}
                 <b>{p.headline}</b>
               </div>
               <div className="row wrap" style={{ gap: 26 }}>
@@ -173,10 +166,16 @@ export default function PaceCoach() {
                     {p.mileage_start} → {p.mileage_peak}
                     <small>mi</small>
                   </div>
-                  <div className="foot">start → peak week</div>
+                  <div className="foot">
+                    target ~{p.mileage_target_peak} mi/wk · long run to {p.long_run_peak} mi ·
+                    taper {p.taper_weeks} wk
+                  </div>
                 </div>
               </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+              <div className="ink2" style={{ fontSize: 12.5, marginTop: 12 }}>
+                {p.volume_note}
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                 {p.heat_note}
               </div>
             </Card>
@@ -237,13 +236,9 @@ export default function PaceCoach() {
                 />
               </ComposedChart>
             </ResponsiveContainer>
-            <div className="row wrap" style={{ gap: 14, marginTop: 8, fontSize: 12 }}>
-              {Object.entries(PHASE_COLOR).map(([ph, c]) => (
-                <span key={ph} className="row" style={{ gap: 6 }}>
-                  <span className="tt-dot" style={{ background: c }} /> {ph}
-                </span>
-              ))}
-            </div>
+            <ChartLegend
+              items={Object.entries(PHASE_COLOR).map(([ph, c]) => ({ label: ph, color: c }))}
+            />
           </Card>
 
           {/* Predictions + schedule */}

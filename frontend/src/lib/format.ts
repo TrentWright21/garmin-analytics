@@ -18,6 +18,18 @@ export const hoursMin = (seconds: number | null | undefined): string => {
   return `${h}h ${m}m`;
 };
 
+// Race/PR clock: "24:45" under an hour, "2:04:13" over.
+export const clock = (seconds: number | null | undefined): string => {
+  if (seconds == null) return "—";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
+    : `${m}:${s.toString().padStart(2, "0")}`;
+};
+
 export const paceFromSeconds = (durationS: number | null, distanceM: number | null): string => {
   if (!durationS || !distanceM) return "—";
   const secPerMile = durationS / (distanceM / M_PER_MILE);

@@ -94,6 +94,20 @@ class DailyMetrics(Base):
     restless_moments: Mapped[int | None] = mapped_column(Integer)
     skin_temp_dev_c: Mapped[float | None] = mapped_column(Float)
 
+    # Garmin Load Focus (training_status payload's monthly load balance): the
+    # 4-week load split into aerobic-low / aerobic-high / anaerobic buckets vs
+    # Garmin's personalized target ranges, plus its verdict (e.g. "BALANCED").
+    load_aerobic_low: Mapped[float | None] = mapped_column(Float)
+    load_aerobic_high: Mapped[float | None] = mapped_column(Float)
+    load_anaerobic: Mapped[float | None] = mapped_column(Float)
+    load_aerobic_low_target_min: Mapped[int | None] = mapped_column(Integer)
+    load_aerobic_low_target_max: Mapped[int | None] = mapped_column(Integer)
+    load_aerobic_high_target_min: Mapped[int | None] = mapped_column(Integer)
+    load_aerobic_high_target_max: Mapped[int | None] = mapped_column(Integer)
+    load_anaerobic_target_min: Mapped[int | None] = mapped_column(Integer)
+    load_anaerobic_target_max: Mapped[int | None] = mapped_column(Integer)
+    load_balance_phrase: Mapped[str | None] = mapped_column(String(64))
+
 
 class Activity(Base):
     __tablename__ = "activities"

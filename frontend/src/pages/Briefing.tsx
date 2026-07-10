@@ -10,7 +10,17 @@ import {
 import { api, type Briefing as BriefingData } from "../api";
 import { COLORS } from "../components/charts";
 import { Card, Empty, Meter, Pill, Stat, bandStatus } from "../components/ui";
+import { titleize } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
+
+// Workout intensity -> status vocabulary (icon+label pill; never color-only).
+const WORKOUT_STATUS: Record<string, string> = {
+  rest: "good",
+  recovery: "good",
+  easy: "good",
+  moderate: "watch",
+  hard: "alert",
+};
 
 function heatStatus(sev?: string): string {
   if (sev === "extreme" || sev === "high") return "alert";
@@ -263,6 +273,67 @@ function BodyBatteryCard() {
   );
 }
 
+// -- today's plan (the recommended workout — answers "what should I do?") -----
+
+function WorkoutCard() {
+  const { data, loading } = useAsync(() => api.todayWorkout(), []);
+  const w = data?.workout;
+  return (
+    <Card
+      title="Today's plan"
+      sub={w?.summary ?? "Your recommended session for today"}
+      right={w && <Pill status="neutral">{w.ai_generated ? "AI coach" : "Rule-based"}</Pill>}
+    >
+      {loading ? (
+        <div className="center" style={{ minHeight: 120 }}>
+          <div className="spinner" />
+        </div>
+      ) : !w ? (
+        <Empty msg="No workout recommendation yet — it generates with the morning brief." />
+      ) : (
+        <>
+          <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
+            <Pill status={WORKOUT_STATUS[w.intensity] ?? "neutral"}>{titleize(w.workout_type)}</Pill>
+            <Pill status="neutral">{w.intensity} intensity</Pill>
+            {w.duration_min != null && <Pill status="neutral">{w.duration_min} min</Pill>}
+            <Pill status="neutral">{w.confidence} confidence</Pill>
+          </div>
+          <p className="ink" style={{ fontSize: 14.5, lineHeight: 1.55, margin: "0 0 12px" }}>
+            {w.instructions}
+          </p>
+          <div className="grid cols-2" style={{ gap: 16 }}>
+            {w.why && (
+              <div>
+                <div className="band" style={{ marginBottom: 3 }}>
+                  WHY
+                </div>
+                <div className="ink2" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                  {w.why}
+                </div>
+              </div>
+            )}
+            {w.watch_out && (
+              <div>
+                <div className="band" style={{ marginBottom: 3 }}>
+                  WATCH OUT
+                </div>
+                <div className="ink2" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                  {w.watch_out}
+                </div>
+              </div>
+            )}
+          </div>
+          {w.insight && (
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 12, lineHeight: 1.5 }}>
+              {w.insight}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // -- risk flags --------------------------------------------------------------
 
 function RiskCard({ b }: { b: BriefingData }) {
@@ -324,21 +395,32 @@ export default function Briefing() {
         </Card>
       ) : (
         <>
-          <FormStrip b={b} />
-
-          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", marginTop: 16 }}>
+          {/* Q1: how recovered am I? */}
+          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
             <ReadinessSummary b={b} />
             <RecoveryCard b={b} />
+          </div>
+
+          {/* Q3: what should I do today? — the centerpiece */}
+          <div style={{ marginTop: 16 }}>
+            <WorkoutCard />
+          </div>
+
+          {/* Q2 (energy/sleep) + today's conditions for that session */}
+          <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr", marginTop: 16 }}>
+            <BodyBatteryCard />
             <ConditionsCard b={b} />
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr", marginTop: 16 }}>
-            <BodyBatteryCard />
-            <EventCard b={b} />
-          </div>
-
+          {/* Q4: is anything unusual? */}
           <div style={{ marginTop: 16 }}>
             <RiskCard b={b} />
+          </div>
+
+          {/* Q5: progress toward the goal + training-load context */}
+          <div className="grid" style={{ gridTemplateColumns: "1fr 1.6fr", marginTop: 16 }}>
+            <EventCard b={b} />
+            <FormStrip b={b} />
           </div>
         </>
       )}

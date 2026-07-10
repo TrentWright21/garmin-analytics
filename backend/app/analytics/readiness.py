@@ -20,6 +20,7 @@ composes the ``engine`` and ``fitness`` primitives rather than re-deriving them.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import polars as pl
@@ -116,17 +117,29 @@ def _clip(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
-def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None) -> dict[str, Any]:
+def daily_readiness(
+    daily: pl.DataFrame,
+    load_by_day: pl.DataFrame | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, Any]:
     """Composite 0-100 readiness with a traffic-light band and ranked drivers.
 
     ``load_by_day`` (from ``engine.daily_training_load``) is optional; when
     present, a high acute:chronic ratio or deeply negative form applies a
     training-load penalty on top of the physiological signals.
+
+    ``today`` lets the stress component avoid today's partial row: ``avg_stress``
+    is day-cumulative, so on the morning sync it covers overnight only and reads
+    artificially calm. When the latest row is today, stress scores yesterday's
+    complete day instead (``stress_source`` says which was used).
     """
     if daily.is_empty():
         return {"available": False, "score": None, "band": "unknown", "drivers": []}
 
-    last = daily.sort("day").tail(1).to_dicts()[0]
+    rows = daily.sort("day").tail(2).to_dicts()
+    last = rows[-1]
+    prev = rows[-2] if len(rows) > 1 else {}
     hrv_z = _latest(ax.hrv_swc(daily), "hrv_z")
     rhr_dev = _latest(resting_hr_deviation(daily), "rhr_dev_bpm")
 
@@ -144,8 +157,9 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
         components["sleep"] = sleep_comp
     if (bb := last.get("body_battery_high")) is not None:
         components["body_battery"] = _clip(float(bb))
-    if (stress := last.get("avg_stress")) is not None:
-        components["stress"] = _clip(100.0 - float(stress))
+    stress_val, stress_source = _stress_signal(last, prev, today)
+    if stress_val is not None:
+        components["stress"] = _clip(100.0 - stress_val)
 
     if not components:
         return {"available": False, "score": None, "band": "unknown", "drivers": []}
@@ -157,7 +171,7 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
     score = round(_clip(base - penalty))
 
     band = "green" if score >= GREEN_MIN else "yellow" if score >= YELLOW_MIN else "red"
-    drivers = _drivers(components)
+    drivers = _drivers(components, _stress_label(stress_source))
 
     return {
         "available": True,
@@ -168,11 +182,75 @@ def daily_readiness(daily: pl.DataFrame, load_by_day: pl.DataFrame | None = None
         "load_penalty": round(penalty, 1),
         "load_note": load_note,
         "sleep_debt_7d_h": sleep_debt_h,
+        "stress_source": stress_source,
         # Garmin's own black-box Training Readiness for the same morning — a
         # labeled cross-check, never an input (our score stays explainable).
         "garmin_training_readiness": _f(last.get("training_readiness")),
         "recommendation": _readiness_reco(band, drivers),
     }
+
+
+def readiness_history(
+    daily: pl.DataFrame,
+    load_by_day: pl.DataFrame | None = None,
+    *,
+    days: int = 30,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Day-by-day readiness for the last ``days`` days with a metrics row.
+
+    Replays ``daily_readiness`` as of each day — both frames truncated to what
+    was known that morning — so the history is exactly what the headline score
+    said at the time, never a retroactively smoothed curve. Days without a
+    daily-metrics row are skipped, and days too early to score (no baselines
+    yet) simply don't appear.
+    """
+    if daily.is_empty():
+        return {"available": False, "days": []}
+    df = daily.sort("day")
+    day_list = [d for d in df["day"].to_list() if d is not None][-days:]
+    out: list[dict[str, Any]] = []
+    for d in day_list:
+        sliced = df.filter(pl.col("day") <= d)
+        load_sliced = (
+            load_by_day.filter(pl.col("day") <= d)
+            if load_by_day is not None and not load_by_day.is_empty()
+            else None
+        )
+        r = daily_readiness(sliced, load_sliced, today=today)
+        if r.get("available") and r.get("score") is not None:
+            out.append({"day": str(d), "score": r["score"], "band": r["band"]})
+    return {"available": bool(out), "days": out}
+
+
+def _stress_signal(
+    last: dict[str, Any], prev: dict[str, Any], today: date | None
+) -> tuple[float | None, str | None]:
+    """The avg-stress value to score, dodging today's partial row (review D4).
+
+    On the latest row being today (caller passes ``today``), yesterday's complete
+    day wins; today's overnight-only value is a labeled last resort. For
+    historical frames (or callers that don't pass ``today``) the latest row is a
+    full day and is used as-is.
+    """
+    if today is not None and last.get("day") == today:
+        if (full := prev.get("avg_stress")) is not None:
+            return float(full), "yesterday"
+        if (partial := last.get("avg_stress")) is not None:
+            return float(partial), "today_partial"
+        return None, None
+    if (latest := last.get("avg_stress")) is not None:
+        return float(latest), "latest"
+    return None, None
+
+
+def _stress_label(stress_source: str | None) -> dict[str, str] | None:
+    """Driver-label override making the stress row's provenance visible."""
+    if stress_source == "yesterday":
+        return {"stress": "Stress load (yesterday, full day)"}
+    if stress_source == "today_partial":
+        return {"stress": "Stress load (today so far)"}
+    return None
 
 
 def _sleep_component(
@@ -238,7 +316,9 @@ def _load_penalty(load_by_day: pl.DataFrame | None) -> tuple[float, str | None]:
     return penalty, ("; ".join(notes) if notes else None)
 
 
-def _drivers(components: dict[str, float]) -> list[dict[str, Any]]:
+def _drivers(
+    components: dict[str, float], overrides: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
     """Rank components worst-first so the UI/coach can lead with what hurt."""
     label = {
         "hrv": "HRV vs baseline",
@@ -247,6 +327,8 @@ def _drivers(components: dict[str, float]) -> list[dict[str, Any]]:
         "body_battery": "Body Battery peak",
         "stress": "Stress load",
     }
+    if overrides:
+        label.update(overrides)
     out = []
     for key, value in sorted(components.items(), key=lambda kv: kv[1]):
         verdict = "good" if value >= 67 else "ok" if value >= 45 else "low"

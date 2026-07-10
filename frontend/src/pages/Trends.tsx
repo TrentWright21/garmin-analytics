@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, type DailyRow } from "../api";
-import { COLORS, ChartTooltip, axisProps } from "../components/charts";
+import { COLORS, ChartLegend, ChartTooltip, axisProps } from "../components/charts";
 import { Card, Loading } from "../components/ui";
 import { shortDate } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
@@ -100,17 +100,13 @@ export default function Trends() {
             <Line dataKey="r30" name="30-day avg" stroke={COLORS.s3} strokeWidth={2.5} dot={false} isAnimationActive={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
-        <div className="row wrap" style={{ gap: 16, marginTop: 8, fontSize: 12 }}>
-          <span className="row" style={{ gap: 6 }}>
-            <span className="tt-dot" style={{ background: COLORS.baseline }} /> Daily
-          </span>
-          <span className="row" style={{ gap: 6 }}>
-            <span className="tt-dot" style={{ background: COLORS.s1 }} /> 7-day avg
-          </span>
-          <span className="row" style={{ gap: 6 }}>
-            <span className="tt-dot" style={{ background: COLORS.s3 }} /> 30-day avg
-          </span>
-        </div>
+        <ChartLegend
+          items={[
+            { label: "Daily", color: COLORS.baseline },
+            { label: "7-day avg", color: COLORS.s1 },
+            { label: "30-day avg", color: COLORS.s3 },
+          ]}
+        />
       </Card>
     </>
   );

@@ -38,6 +38,18 @@ goal:
 #   hr_max: 185
 #   hr_rest: 52
 
+# AI metric insights (Tier 2/3). OFF by default: the metric-detail view always
+# shows free local (no-AI) insights. Turn this on ONLY if you want an optional
+# "Generate deeper analysis" button that calls Claude on explicit request. Needs
+# GA_ANTHROPIC_API_KEY. Every knob below is a cost control.
+ai_insights:
+  enabled: false
+  model: claude-haiku-4-5-20251001   # cheap by design (not Opus)
+  max_output_tokens: 320             # strict output ceiling
+  cache_hours: 18                    # reuse a summary before regenerating
+  max_calls_per_day: 25              # hard daily ceiling (0 disables generation)
+  min_days: 14                       # refuse when history is too thin
+
 # Home location for the local weather feed (Open-Meteo, no API key needed).
 location:
   name: Hartselle, AL
@@ -51,3 +63,6 @@ event:
   name: Mount Whitney Summit
   date: 2026-08-01
   kind: climb
+  # Whitney's day hike from Whitney Portal is ~6,100 ft of gain; this anchors
+  # the goal plan's weekly vert (elevation-gain) targets on the Progress page.
+  vert_gain_ft: 6100

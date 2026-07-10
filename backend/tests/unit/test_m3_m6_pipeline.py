@@ -18,6 +18,7 @@ from app.analytics import engine as ax
 from app.collectors.sync import SyncEngine
 from app.db.models.core import Activity, DailyMetrics, RacePrediction, RawApiData
 from app.normalize.mappers import build_daily_metrics, build_race_prediction
+from app.normalize.personal_records import parse_personal_records
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +85,26 @@ def training_status_payload() -> dict[str, Any]:
                     },
                 }
             }
-        }
+        },
+        "mostRecentTrainingLoadBalance": {
+            "metricsTrainingLoadBalanceDTOMap": {
+                # A stale secondary device first: the primary must win.
+                "1111": {"monthlyLoadAerobicLow": 999.0, "primaryTrainingDevice": False},
+                "3500092692": {
+                    "monthlyLoadAerobicLow": 216.6,
+                    "monthlyLoadAerobicHigh": 278.0,
+                    "monthlyLoadAnaerobic": 38.2,
+                    "monthlyLoadAerobicLowTargetMin": 143,
+                    "monthlyLoadAerobicLowTargetMax": 354,
+                    "monthlyLoadAerobicHighTargetMin": 243,
+                    "monthlyLoadAerobicHighTargetMax": 454,
+                    "monthlyLoadAnaerobicTargetMin": 0,
+                    "monthlyLoadAnaerobicTargetMax": 211,
+                    "trainingBalanceFeedbackPhrase": "BALANCED",
+                    "primaryTrainingDevice": True,
+                },
+            }
+        },
     }
 
 
@@ -202,6 +222,12 @@ class TestSyncPipeline:
             assert dm.hrv_weekly_avg == 76
             assert dm.training_status == "UNPRODUCTIVE_5"
             assert dm.acwr_garmin == 1.2
+            # Load Focus: mapped from the PRIMARY device, not the stale first one
+            assert dm.load_aerobic_low == 216.6
+            assert dm.load_aerobic_high == 278.0
+            assert dm.load_anaerobic == 38.2
+            assert dm.load_anaerobic_target_max == 211
+            assert dm.load_balance_phrase == "BALANCED"
             assert dm.body_battery_change == 67
             assert dm.restless_moments == 40
             assert dm.skin_temp_dev_c == -0.3
@@ -261,8 +287,53 @@ class TestPhase1bMappers:
     def test_training_status_missing_sections_tolerated(self) -> None:
         m = build_daily_metrics(DAY, {"training_status": {"mostRecentTrainingStatus": {}}})
         assert m.training_status is None
+        assert m.load_aerobic_low is None and m.load_balance_phrase is None
         m = build_daily_metrics(DAY, {"training_status": {"unexpected": "shape"}})
         assert m.training_status is None
+
+    def test_load_balance_without_primary_flag_takes_first_device(self) -> None:
+        payload = {
+            "mostRecentTrainingLoadBalance": {
+                "metricsTrainingLoadBalanceDTOMap": {"1111": {"monthlyLoadAerobicLow": 55.5}}
+            }
+        }
+        m = build_daily_metrics(DAY, {"training_status": payload})
+        assert m.load_aerobic_low == 55.5
+
+
+class TestPersonalRecords:
+    def test_parse_maps_known_types_and_skips_unknown(self) -> None:
+        payload = [
+            {
+                "typeId": 3,
+                "value": 1406.6,
+                "activityId": 21060273279,
+                "activityName": "Florence Running",
+                "activityStartDateTimeLocalFormatted": "2025-11-22T07:03:12.0",
+            },
+            {  # steps record: no activity — the date comes from the PR stamp
+                "typeId": 12,
+                "value": 34061.0,
+                "activityId": 0,
+                "prStartTimeLocalFormatted": "2025-10-18T00:00:00.0",
+            },
+            {"typeId": 99, "value": 1.0},  # unknown type: skipped, never mislabeled
+            {"typeId": 1},  # no value: skipped
+            "junk",
+        ]
+        records = parse_personal_records(payload)
+        assert [r["type_id"] for r in records] == [3, 12]  # newest first
+        five_k = records[0]
+        assert five_k["label"] == "Fastest 5K" and five_k["kind"] == "time"
+        assert five_k["date"] == "2025-11-22"
+        assert five_k["activity_id"] == 21060273279
+        steps = records[1]
+        assert steps["date"] == "2025-10-18" and steps["activity_id"] is None
+
+    def test_parse_tolerates_bad_shapes(self) -> None:
+        assert parse_personal_records(None) == []
+        assert parse_personal_records({"unexpected": "shape"}) == []
+        assert parse_personal_records([{"typeId": True, "value": 5}]) == []
 
 
 class TestColumnMigration:
