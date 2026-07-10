@@ -8,7 +8,9 @@ unchecked task. Keep it updated as tasks land — check items off and note the c
 
 - [x] **Phase 1a — safest high-impact fixes** — shipped commit `d56c570`, deployed to
   the droplet 2026-07-09. Details in "What already shipped" below.
-- [ ] **Phase 1b — normalize the already-collected data** (schema change; next up)
+- [x] **Phase 1b — normalize the already-collected data** — shipped commit `218f2f5`
+  (2026-07-09). Details in "What already shipped" below. Dev DB renormalized (196
+  days of training status, TE on 158/159 activities, 4 race-prediction days).
 - [ ] **Ops — 365-day backfill on the droplet** (no code; ~5k Garmin calls)
 - [ ] **Phase 2 — better analysis engine**
 - [ ] **Phase 3 — UI restructure**
@@ -52,6 +54,38 @@ All in `app/ai/morning_brief.py`, `app/notify/message.py`, `app/analytics/engine
 
 ---
 
+## What already shipped (Phase 1b, commit 218f2f5)
+
+Everything in the "Phase 1b — normalize the riches" section below landed 2026-07-09:
+
+1. **Schema**: the seven new `DailyMetrics` columns, the nine new `Activity`
+   columns (TE, label, speed, zone seconds), and the `race_predictions` table
+   (`app/db/models/core.py`), plus a dumb idempotent `_add_missing_columns`
+   startup migration in `app/db/engine.py` (inspector + `ALTER TABLE ADD COLUMN`;
+   Alembic still parked).
+2. **Mappers** (`app/normalize/mappers.py`): training_readiness extras, nested
+   `trainingStatusFeedbackPhrase` (first device), sleep top-level extras, activity
+   TE/zones/speed, and `build_race_prediction` (payload `calendarDate` wins,
+   metric_date fallback). `normalize_range` materializes race predictions.
+3. **Cheap wins wired**: `_prompt_payload` gained `garmin_view` (status phrase,
+   native recovery hours, acute load, weekly HRV) + sleep extras, and `_SYSTEM`
+   tells the model to reconcile disagreements out loud; hard-day detection is
+   TE-first (`te_label` in hard set or `anaerobic_te >= 2.5`, load >= 150 only
+   when TE absent — a long easy run no longer blocks quality the next day);
+   `recovery_timer` reports Garmin's native timer as primary (`source: "garmin"`,
+   today's fetch only) with the heuristic as fallback; the message shows pace +
+   aerobic TE on the Last-session line, overnight Body Battery recharge, and
+   "Garmin status: X" when not Productive/Peaking.
+4. **Tests**: 188 pass (was 175) — pipeline assertions for every new field, race
+   prediction snapshot normalization, defensive mapper cases, migration
+   drop/re-add roundtrip, garmin-vs-heuristic recovery timer, TE hard-day cases,
+   garmin_view payload, message lines.
+
+NOT yet surfaced in the UI (race predictor trend, PR timeline, zone charts) —
+that's Phase 3's "Progress" page; the data is now in the DB waiting for it.
+
+---
+
 ## Verified data inventory (do NOT rediscover this)
 
 Confirmed by direct inspection of `data/garmin.db` raw payloads on 2026-07-08.
@@ -80,7 +114,7 @@ Garmin calls.
 
 ---
 
-## Phase 1b — normalize the riches (NEXT UP; the report's #1 item)
+## Phase 1b — normalize the riches (DONE — commit `218f2f5`, see status ledger)
 
 One session of work. Additive schema change; SQLite `ALTER TABLE ... ADD COLUMN`
 is enough (no Alembic yet). After mapping: `python -m app.cli renormalize` rebuilds
